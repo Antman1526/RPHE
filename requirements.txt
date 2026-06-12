@@ -1,0 +1,23 @@
+# --- Core (required) ---
+typer>=0.12.0            # cross-platform CLI framework
+rich>=13.7.0             # pretty tables/prompts on macOS + Windows
+PyYAML>=6.0.1            # config file parsing
+keyring>=24.3.0          # macOS Keychain / Windows Credential Manager
+
+# --- Email: Gmail API (optional; needed only for provider: gmail) ---
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
+google-auth>=2.28.0
+
+# --- Email: Microsoft Graph (optional; needed only for provider: graph) ---
+msal>=1.28.0
+requests>=2.31.0
+
+# --- Reset automation (optional; needed only for `rotate --automate`) ---
+playwright>=1.42.0       # also run: python -m playwright install chromium
+
+# --- Convenience (optional) ---
+pyperclip>=1.8.2         # copy new password to clipboard during a reset
+
+# NOTE: IMAP scanning uses only the Python standard library (imaplib) — no dep.
+# NordPass uses CSV import/export (stdlib csv) — there is NO NordPass SDK/CLI.

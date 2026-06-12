@@ -1,0 +1,33 @@
+# Never commit secrets or staged credentials.
+*.csv
+nordpass_import.csv
+audit.log.jsonl
+client_secret*.json
+token*.json
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-build/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Build artifacts / installers (built by CI or packaging scripts)
+*.dmg
+*.exe
+*.pkg
+
+# Local tooling state
+logs/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

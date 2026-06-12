@@ -1,0 +1,64 @@
+# RPHE configuration — NON-SECRET settings only.
+# Secrets (passwords, OAuth tokens) live in your OS keystore, never here.
+# Copy this to your config dir with `rphe init`, then edit.
+
+# Where audit log + the NordPass CSV are written. Blank = OS default app data dir.
+data_dir: ""
+
+# Bitwarden folder that RPHE-managed items are filed under.
+bitwarden_folder: "RPHE-Rotated"
+
+# Where the NordPass import CSV is staged. Blank = data_dir/nordpass_import.csv
+nordpass_export_path: ""
+
+# Default OFF. When false, `rotate` only prints guided steps. When true,
+# `rotate --automate` may open an assisted browser (it still pauses for you).
+automate_resets: false
+
+# Password policy used when rotating.
+policy:
+  length: 24
+  use_upper: true
+  use_lower: true
+  use_digits: true
+  use_symbols: true
+  avoid_ambiguous: true       # drop look-alikes O/0, l/1/I
+  passphrase_mode: false      # set true for word-based passphrases
+  passphrase_words: 6
+  passphrase_separator: "-"
+
+# One block per inbox to scan. Mix providers freely.
+accounts:
+  # --- Gmail via the Gmail API (recommended for Gmail; read-only scope) ---
+  - label: "personal-gmail"
+    provider: "gmail"
+    address: "you@gmail.com"
+    lookback_days: 30
+    # Auth once with: rphe auth gmail personal-gmail /path/to/client_secret.json
+
+  # --- Outlook/365 via Microsoft Graph (recommended for Microsoft; Mail.Read) ---
+  # - label: "work-outlook"
+  #   provider: "graph"
+  #   address: "you@outlook.com"
+  #   lookback_days: 30
+  #   # Auth once with: rphe auth graph work-outlook <client_id>
+
+  # --- Any provider via IMAP (universal fallback; needs an app password) ---
+  # - label: "fastmail"
+  #   provider: "imap"
+  #   address: "you@fastmail.com"
+  #   imap_host: "imap.fastmail.com"
+  #   imap_port: 993
+  #   folders: ["INBOX"]
+  #   lookback_days: 30
+  #   # Store the app password with:
+  #   #   rphe secrets set imap.fastmail.app_password
+
+  # --- Offline .eml files (no account access; export suspicious mail to scan) ---
+  # Great for trying RPHE on real Gmail messages WITHOUT an OAuth token:
+  # in Gmail open a message → ⋮ → "Download message", save the .eml here.
+  # - label: "exported"
+  #   provider: "eml"
+  #   address: ""
+  #   folders: ["~/Desktop/suspicious-emails"]
+  #   lookback_days: 3650

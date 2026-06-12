@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rphe"
+version = "0.2.0"
+description = "Recovery & Password-Hygiene Engine — scan email for breaches, rotate passwords, sync Bitwarden + NordPass."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "RPHE" }]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.7.0",
+    "PyYAML>=6.0.1",
+    "keyring>=24.3.0",
+]
+
+[project.optional-dependencies]
+gmail = ["google-api-python-client>=2.120.0", "google-auth-oauthlib>=1.2.0", "google-auth>=2.28.0"]
+graph = ["msal>=1.28.0", "requests>=2.31.0"]
+automate = ["playwright>=1.42.0"]
+clipboard = ["pyperclip>=1.8.2"]
+all = [
+    "google-api-python-client>=2.120.0", "google-auth-oauthlib>=1.2.0", "google-auth>=2.28.0",
+    "msal>=1.28.0", "requests>=2.31.0", "playwright>=1.42.0", "pyperclip>=1.8.2",
+]
+
+[project.scripts]
+rphe = "rphe.cli:main"
+
+[project.gui-scripts]
+rphe-gui = "rphe.gui:launch"
+
+[tool.setuptools.packages.find]
+include = ["rphe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
