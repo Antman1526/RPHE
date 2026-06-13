@@ -27,6 +27,10 @@ jobs:
           python -m pip install google-api-python-client google-auth-oauthlib msal
       - name: Verify Tk
         run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Fetch Bitwarden CLI
+        run: python packaging/fetch_bw.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build .app + .dmg
         run: |
           python -m PyInstaller --noconfirm packaging/rphe_gui.spec
@@ -59,6 +63,10 @@ jobs:
           python -m pip install google-api-python-client google-auth-oauthlib msal
       - name: Verify Tk
         run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Fetch Bitwarden CLI
+        run: python packaging/fetch_bw.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build .exe
         run: python -m PyInstaller --noconfirm packaging/rphe_gui.spec
       - name: Check output

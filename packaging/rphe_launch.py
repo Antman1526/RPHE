@@ -33,8 +33,20 @@ def _selftest() -> None:
             oauth.append(opt)
         except Exception:
             pass
+    # Verify the bundled Bitwarden CLI is present and runnable.
+    from rphe.vaults.bitwarden import find_bw
+    bw = find_bw()
+    bw_info = "NOT FOUND"
+    if bw:
+        try:
+            import subprocess
+            ver = subprocess.run([bw, "--version"], capture_output=True,
+                                 text=True, timeout=30).stdout.strip()
+            bw_info = f"{bw} -> {ver or 'present'}"
+        except Exception as exc:
+            bw_info = f"{bw} (version check failed: {exc})"
     print(f"RPHE selftest OK: {len(mods)} modules imported; keyring backend={backend}; "
-          f"oauth libs bundled: {oauth or 'none (IMAP-only app)'}")
+          f"oauth libs bundled: {oauth or 'none (IMAP-only app)'}; bw: {bw_info}")
 
 
 if __name__ == "__main__":

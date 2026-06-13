@@ -15,9 +15,12 @@ Security notes:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from ..models import GeneratedCredential, VaultItem
@@ -26,6 +29,46 @@ from .base import VaultError, VaultWriter
 
 # Bitwarden item type 1 == Login.
 _LOGIN_TYPE = 1
+
+
+def _prepare_bundled(path: Path) -> None:
+    """Make a bundled bw runnable: ensure +x and clear macOS quarantine.
+
+    An unsigned app's nested binary can be blocked by Gatekeeper; best-effort
+    stripping of the quarantine xattr lets it exec. All failures are ignored.
+    """
+    try:
+        if sys.platform != "win32":
+            import stat as _stat
+            path.chmod(path.stat().st_mode | _stat.S_IEXEC | _stat.S_IXGRP | _stat.S_IXOTH)
+        if sys.platform == "darwin":
+            subprocess.run(["xattr", "-d", "com.apple.quarantine", str(path)],
+                           capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+def find_bw() -> Optional[str]:
+    """Locate the Bitwarden CLI, preferring a binary bundled with the app.
+
+    Order: $RPHE_BW_PATH → bundled (PyInstaller _MEIPASS / next to the exe) →
+    a system `bw` on PATH. Returns None if nothing is found.
+    """
+    name = "bw.exe" if sys.platform == "win32" else "bw"
+    override = os.environ.get("RPHE_BW_PATH")
+    if override and Path(override).exists():
+        return override
+    if getattr(sys, "frozen", False):
+        candidates = []
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / name)
+        candidates.append(Path(sys.executable).resolve().parent / name)
+        for cand in candidates:
+            if cand.exists():
+                _prepare_bundled(cand)
+                return str(cand)
+    return shutil.which(name) or shutil.which("bw")
 
 
 class BitwardenVault(VaultWriter):
@@ -38,12 +81,14 @@ class BitwardenVault(VaultWriter):
         self.timeout = timeout
         self._session: Optional[str] = None
         self._folder_id: Optional[str] = None
-        self.bw = shutil.which("bw")
+        self.bw = find_bw()
         if not self.bw:
             raise VaultError(
-                "Bitwarden CLI 'bw' not found on PATH. Install it:\n"
+                "Bitwarden CLI 'bw' not found. The packaged app bundles it; if you "
+                "are running from source, install it:\n"
                 "  macOS:   brew install bitwarden-cli\n"
-                "  Windows: winget install Bitwarden.CLI   (or: npm i -g @bitwarden/cli)"
+                "  Windows: winget install Bitwarden.CLI   (or: npm i -g @bitwarden/cli)\n"
+                "  or set RPHE_BW_PATH to a bw binary."
             )
 
     # --- low-level command runner ------------------------------------------

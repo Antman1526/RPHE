@@ -24,6 +24,9 @@ dist/
 *.exe
 *.pkg
 
+# Vendored Bitwarden CLI (downloaded at build time by fetch_bw.py)
+packaging/vendor/
+
 # Local tooling state
 logs/
 .claude/

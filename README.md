@@ -43,6 +43,15 @@ connect Gmail/Outlook via OAuth — no YAML editing or CLI required. (IMAP cover
 Gmail, Outlook, iCloud and Fastmail via app passwords with zero extra setup; the
 Gmail-API/Graph OAuth path is bundled too for least-privilege read-only tokens.)
 
+The installers also **bundle the Bitwarden CLI (`bw`)**, so there's no separate
+`brew install` / `winget install` step — the app finds the bundled binary
+automatically (`find_bw()`), falling back to a system `bw` for source runs. This
+adds ~85 MB to each installer (the CLI embeds Node). The bundled `bw` is
+GPL-3.0, shipped unmodified and invoked as a separate process — see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). On an unsigned/quarantined app,
+macOS may block the nested `bw` on first run; RPHE best-effort clears the
+quarantine xattr, and code-signing/notarization removes the issue entirely.
+
 - **macOS `.dmg`** — built locally with `PYBIN=/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 ./packaging/build_macos.sh` → `dist/RPHE.dmg` (drag to Applications).
 - **Windows `.exe`** — PyInstaller can't cross-compile, so it's built on Windows
   (`packaging/build_windows.ps1`) **or** automatically by GitHub Actions.
@@ -188,9 +197,10 @@ already changed your recovery options.
 ## 4. Setup
 
 ### Prerequisites (both OSes)
-- Python **3.11+**
-- Bitwarden CLI **`bw`** (only needed for vault writes)
-- Node 18+ (only if you install `bw` via npm)
+- **Installed app (.dmg/.exe):** none — Python and the Bitwarden CLI are bundled.
+- **Running from source:** Python **3.11+**, and the Bitwarden CLI **`bw`** on
+  PATH for vault writes (the packaged app bundles it; from source you install it
+  with `brew install bitwarden-cli` / `winget install Bitwarden.CLI`).
 
 ### macOS
 
@@ -295,9 +305,11 @@ RPHE/
 │   └── GMAIL_SETUP.md            # end-to-end Gmail OAuth runbook + troubleshooting
 ├── .github/workflows/
 │   └── build-installers.yml      # CI: build .dmg (macOS) + .exe (Windows)
+├── THIRD_PARTY_NOTICES.md        # bundled Bitwarden CLI (GPL-3.0) notice
 ├── packaging/
 │   ├── rphe_launch.py            # frozen-app entry point (+ headless self-test)
 │   ├── rphe_gui.spec             # PyInstaller spec (.app on macOS, .exe on Windows)
+│   ├── fetch_bw.py               # downloads the standalone Bitwarden CLI to bundle
 │   ├── build_macos.sh            # build RPHE.app → RPHE.dmg
 │   └── build_windows.ps1         # build RPHE.exe
 ├── rphe/
@@ -340,7 +352,8 @@ RPHE/
     ├── test_samples.py           # demo corpus regression guard
     ├── test_breach.py            # HIBP k-anonymity + email lookup (offline)
     ├── test_candidates_passkeys.py  # 5-password picker + passkey advisor
-    └── test_config_roundtrip.py  # Settings save_config -> load_config
+    ├── test_config_roundtrip.py  # Settings save_config -> load_config
+    └── test_find_bw.py           # bundled-first Bitwarden CLI locator
 ```
 
 ---

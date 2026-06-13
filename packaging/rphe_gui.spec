@@ -47,6 +47,17 @@ for _pkg in ("google", "googleapiclient", "google_auth_oauthlib",
              "google_auth_httplib2", "msal"):
     _collect(_pkg)
 
+# Bundle the standalone Bitwarden CLI if it was fetched (packaging/fetch_bw.py),
+# so the app needs no separately-installed `bw`. It lands in _MEIPASS at runtime
+# and rphe.vaults.bitwarden.find_bw() locates it there first.
+VENDOR = ROOT / "packaging" / "vendor"
+for _bwname in ("bw", "bw.exe"):
+    _bwpath = VENDOR / _bwname
+    if _bwpath.exists():
+        binaries.append((str(_bwpath), "."))
+        print(f"[rphe.spec] bundled Bitwarden CLI: {_bwname} "
+              f"({_bwpath.stat().st_size // (1024*1024)} MB)")
+
 a = Analysis(
     [str(ROOT / "packaging" / "rphe_launch.py")],
     pathex=[str(ROOT)],
@@ -71,7 +82,7 @@ if sys.platform == "darwin":
         coll, name="RPHE.app", icon=None,
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.2.1",
+            "CFBundleShortVersionString": "0.2.2",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.

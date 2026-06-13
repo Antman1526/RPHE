@@ -185,8 +185,8 @@ class Engine:
 
     @staticmethod
     def bitwarden_available() -> bool:
-        import shutil
-        return shutil.which("bw") is not None
+        from .vaults.bitwarden import find_bw
+        return find_bw() is not None
 
     def bitwarden_status(self) -> dict:
         if not self.bitwarden_available():
