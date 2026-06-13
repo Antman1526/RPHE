@@ -42,11 +42,17 @@ class RpheGui:
         self.root.minsize(760, 460)
         self._build()
         self._poll_queue()
+        # First-run nudge: if no accounts are configured, point to Setup.
+        if not self.engine.cfg.accounts:
+            self.root.after(400, lambda: self.status.set(
+                "No accounts configured yet — click 'Setup…' to add an inbox, "
+                "connect Gmail/Outlook, and log in to Bitwarden."))
 
     # --- layout -------------------------------------------------------------
     def _build(self) -> None:
         bar = ttk.Frame(self.root, padding=(10, 8))
         bar.pack(side=tk.TOP, fill=tk.X)
+        self._btn(bar, "Setup…", self.on_setup)
         self._btn(bar, "Unlock Bitwarden", self.on_unlock)
         self._btn(bar, "Scan Inboxes", self.on_scan)
         self._btn(bar, "Breach Report", self.on_breach_report)
@@ -101,6 +107,16 @@ class RpheGui:
         self.root.after(120, self._poll_queue)
 
     # --- actions ------------------------------------------------------------
+    def on_setup(self):
+        from .gui_setup import SettingsWindow
+
+        def saved():
+            # Adopt the freshly-saved config so a subsequent Scan sees new accounts.
+            from .engine import Engine
+            self.engine = Engine()
+            self.status.set("Settings saved. You can Scan now.")
+        SettingsWindow(self.root, self.engine, on_saved=saved)
+
     def on_unlock(self):
         pw = simpledialog.askstring("Unlock Bitwarden",
                                     "Bitwarden master password:", show="*",

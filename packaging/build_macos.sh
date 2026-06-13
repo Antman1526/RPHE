@@ -17,6 +17,8 @@ echo "Using Python: $("$PYBIN" -c 'import sys;print(sys.executable, sys.version.
 
 "$PYBIN" -m pip install --upgrade pip >/dev/null
 "$PYBIN" -m pip install --upgrade pyinstaller typer rich PyYAML keyring >/dev/null
+# Optional OAuth libs so the bundled app's Connect Gmail/Outlook buttons work.
+"$PYBIN" -m pip install --upgrade google-api-python-client google-auth-oauthlib msal >/dev/null
 
 rm -rf build dist
 "$PYBIN" -m PyInstaller --noconfirm packaging/rphe_gui.spec

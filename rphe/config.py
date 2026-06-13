@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -102,3 +102,33 @@ def load_config(path: Path | None = None) -> Config:
         automate_resets=bool(raw.get("automate_resets", False)),
         data_dir=raw.get("data_dir", ""),
     )
+
+
+def save_config(cfg: Config, path: Path | None = None) -> Path:
+    """Persist a Config back to YAML (used by the GUI Settings screen).
+
+    Writes NON-secret settings only — secrets stay in the OS keystore. The file
+    is written atomically and locked to 0600 on POSIX.
+    """
+    if yaml is None:
+        raise RuntimeError("PyYAML is required. Run: pip install -r requirements.txt")
+    cfg_path = path or (default_config_dir() / "config.yaml")
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "data_dir": cfg.data_dir,
+        "bitwarden_folder": cfg.bitwarden_folder,
+        "nordpass_export_path": cfg.nordpass_export_path,
+        "automate_resets": cfg.automate_resets,
+        "policy": asdict(cfg.policy),
+        "accounts": [asdict(a) for a in cfg.accounts],
+    }
+    tmp = cfg_path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        yaml.safe_dump(data, fh, sort_keys=False, default_flow_style=False)
+    if sys.platform != "win32":
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+    os.replace(tmp, cfg_path)
+    return cfg_path

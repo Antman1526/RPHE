@@ -72,6 +72,32 @@ class BitwardenVault(VaultWriter):
             )
         return proc.stdout.strip()
 
+    # --- status / login (used by the GUI setup screen) ---------------------
+    def status(self) -> dict:
+        """Return `bw status` as a dict: status is one of
+        'unauthenticated' | 'locked' | 'unlocked'. Never needs a session.
+        """
+        try:
+            out = self._run(["status"], with_session=False)
+            return json.loads(out or "{}")
+        except (VaultError, json.JSONDecodeError):
+            return {"status": "unknown"}
+
+    def login_apikey(self, client_id: str, client_secret: str) -> None:
+        """Authenticate with a Bitwarden personal API key (client id/secret).
+
+        Avoids interactive email+password+2FA. Credentials are passed via env,
+        never argv. After this you still must unlock() with the master password.
+        """
+        import os
+        env = {**os.environ, "BW_NOINTERACTIVE": "true",
+               "BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret}
+        proc = subprocess.run(
+            [self.bw, "login", "--apikey"],
+            capture_output=True, text=True, timeout=self.timeout, env=env)
+        if proc.returncode != 0 and "already logged in" not in proc.stderr.lower():
+            raise VaultError(f"Bitwarden API-key login failed: {proc.stderr.strip()}")
+
     # --- session management -------------------------------------------------
     def unlock(self, master_password: Optional[str] = None) -> None:
         """Unlock the vault and cache the session key in the OS keystore.

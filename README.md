@@ -35,15 +35,20 @@ A **local-first**, cross-platform (macOS + Windows) tool that:
 
 ## Desktop app & installers
 
-RPHE ships as a minimal **desktop GUI** (Tkinter — bundles cleanly, zero extra
-deps) over the same engine the CLI uses, so both behave identically.
+RPHE ships as a minimal **desktop GUI** (Tkinter) over the same engine the CLI
+uses, so both behave identically. The app is **self-contained**: a built-in
+**Setup…** screen lets you add/edit email accounts, store IMAP app passwords and
+your HIBP key straight into the OS keychain, log in / unlock Bitwarden, and
+connect Gmail/Outlook via OAuth — no YAML editing or CLI required. (IMAP covers
+Gmail, Outlook, iCloud and Fastmail via app passwords with zero extra setup; the
+Gmail-API/Graph OAuth path is bundled too for least-privilege read-only tokens.)
 
 - **macOS `.dmg`** — built locally with `PYBIN=/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 ./packaging/build_macos.sh` → `dist/RPHE.dmg` (drag to Applications).
 - **Windows `.exe`** — PyInstaller can't cross-compile, so it's built on Windows
   (`packaging/build_windows.ps1`) **or** automatically by GitHub Actions.
 - **CI (`.github/workflows/build-installers.yml`)** builds **both** on native
   runners and attaches them to the GitHub Release when you push a `vX.Y.Z` tag.
-  Trigger: `git tag v0.2.0 && git push origin v0.2.0`, or run the workflow
+  Trigger: `git tag v0.2.1 && git push origin v0.2.1`, or run the workflow
   manually (**Actions → Build installers → Run workflow**) to get artifacts.
 
 > The GUI needs a **Tk-enabled Python** (the python.org installer includes it;
@@ -173,6 +178,7 @@ already changed your recovery options.
 | Reset orchestrator | `rphe/reset/orchestrator.py` | Guided steps; optional Playwright **assisted** reset (never auto-submits) |
 | Passkey advisor | `rphe/passkeys.py` | Detects passkey-capable services, gives enrolment steps (never holds a passkey) |
 | Desktop GUI | `rphe/gui.py` | Tkinter window: scan, breach report, pick-from-5, rotate, sync |
+| GUI setup | `rphe/gui_setup.py` | In-app Settings: accounts, IMAP/HIBP keys, Bitwarden login, OAuth connect |
 | Secure storage | `rphe/secrets.py` | `keyring` wrapper |
 | Audit log | `rphe/audit.py` | Redacted append-only JSONL |
 | CLI | `rphe/cli.py` | Identical UX on macOS + Windows |
@@ -299,6 +305,7 @@ RPHE/
 │   ├── __main__.py               # `python -m rphe`
 │   ├── cli.py                    # Typer CLI — all commands (incl. gui, breach)
 │   ├── gui.py                    # Tkinter desktop GUI
+│   ├── gui_setup.py              # in-app Settings / account-setup screens
 │   ├── engine.py                 # shared headless service (CLI + GUI parity)
 │   ├── config.py                 # YAML config + cross-platform paths
 │   ├── models.py                 # typed domain models (+ redaction-safe views)
@@ -332,7 +339,8 @@ RPHE/
     ├── test_eml_scanner.py       # .eml folder scan → classify pipeline
     ├── test_samples.py           # demo corpus regression guard
     ├── test_breach.py            # HIBP k-anonymity + email lookup (offline)
-    └── test_candidates_passkeys.py  # 5-password picker + passkey advisor
+    ├── test_candidates_passkeys.py  # 5-password picker + passkey advisor
+    └── test_config_roundtrip.py  # Settings save_config -> load_config
 ```
 
 ---

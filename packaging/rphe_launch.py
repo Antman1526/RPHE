@@ -20,11 +20,21 @@ def _selftest() -> None:
         "rphe.scanners.eml_scanner", "rphe.reset.orchestrator",
         "rphe.vaults.bitwarden", "rphe.vaults.nordpass", "rphe.vaults.sync",
     ]
+    mods.append("rphe.gui_setup")
     for m in mods:
         importlib.import_module(m)
     import keyring
     backend = keyring.get_keyring().__class__.__name__
-    print(f"RPHE selftest OK: {len(mods)} modules imported; keyring backend={backend}")
+    # Report whether optional OAuth libs made it into the bundle.
+    oauth = []
+    for opt in ("google_auth_oauthlib", "googleapiclient", "msal"):
+        try:
+            importlib.import_module(opt)
+            oauth.append(opt)
+        except Exception:
+            pass
+    print(f"RPHE selftest OK: {len(mods)} modules imported; keyring backend={backend}; "
+          f"oauth libs bundled: {oauth or 'none (IMAP-only app)'}")
 
 
 if __name__ == "__main__":

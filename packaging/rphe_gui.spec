@@ -16,9 +16,9 @@ except NameError:  # pragma: no cover
 
 # keyring loads its OS backend dynamically — name them so they're bundled.
 hiddenimports = [
-    "rphe", "rphe.gui", "rphe.engine", "rphe.cli", "rphe.breach",
-    "rphe.passkeys", "rphe.passwords", "rphe.classifier", "rphe.config",
-    "rphe.audit", "rphe.secrets", "rphe.models", "rphe.samples",
+    "rphe", "rphe.gui", "rphe.gui_setup", "rphe.engine", "rphe.cli",
+    "rphe.breach", "rphe.passkeys", "rphe.passwords", "rphe.classifier",
+    "rphe.config", "rphe.audit", "rphe.secrets", "rphe.models", "rphe.samples",
     "rphe.scanners", "rphe.scanners.base", "rphe.scanners.imap_scanner",
     "rphe.scanners.gmail_scanner", "rphe.scanners.graph_scanner",
     "rphe.scanners.eml_scanner", "rphe.reset", "rphe.reset.orchestrator",
@@ -29,16 +29,33 @@ hiddenimports = [
 ]
 
 datas = [(str(ROOT / "config.example.yaml"), ".")]
+binaries = []
+
+# Bundle the OAuth libraries IF they're installed in the build env, so the
+# app's "Connect Gmail/Outlook" buttons work. Guarded so the build never breaks
+# when they're absent (the app then falls back to IMAP/CLI for those providers).
+def _collect(pkg):
+    try:
+        from PyInstaller.utils.hooks import collect_all
+        d, b, h = collect_all(pkg)
+        datas.extend(d); binaries.extend(b); hiddenimports.extend(h)
+        print(f"[rphe.spec] bundled optional lib: {pkg}")
+    except Exception as exc:  # not installed -> skip
+        print(f"[rphe.spec] skipping optional lib {pkg}: {exc}")
+
+for _pkg in ("google", "googleapiclient", "google_auth_oauthlib",
+             "google_auth_httplib2", "msal"):
+    _collect(_pkg)
 
 a = Analysis(
     [str(ROOT / "packaging" / "rphe_launch.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["playwright", "google", "googleapiclient", "msal"],  # optional, GUI doesn't need
+    excludes=["playwright"],  # heavy, GUI never needs it
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -54,7 +71,7 @@ if sys.platform == "darwin":
         coll, name="RPHE.app", icon=None,
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.2.0",
+            "CFBundleShortVersionString": "0.2.1",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.

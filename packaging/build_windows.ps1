@@ -17,6 +17,8 @@ if ($LASTEXITCODE -ne 0) {
 
 python -m pip install --upgrade pip | Out-Null
 python -m pip install --upgrade pyinstaller typer rich PyYAML keyring | Out-Null
+# Optional OAuth libs so the bundled app's Connect Gmail/Outlook buttons work.
+python -m pip install --upgrade google-api-python-client google-auth-oauthlib msal | Out-Null
 
 if (Test-Path build) { Remove-Item -Recurse -Force build }
 if (Test-Path dist)  { Remove-Item -Recurse -Force dist }

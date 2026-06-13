@@ -173,3 +173,83 @@ class Engine:
 
     def passkey_advice(self, service_name: str, domain: str) -> PasskeyAdvice:
         return advise(service_name, domain)
+
+    # --- setup helpers (used by the GUI Settings screen) -------------------
+    def save(self, cfg: Optional[Config] = None) -> None:
+        """Persist config to disk and adopt it as the live config."""
+        from .config import save_config
+        cfg = cfg or self.cfg
+        save_config(cfg)
+        self.cfg = cfg
+        self._np = None  # paths may have changed
+
+    @staticmethod
+    def bitwarden_available() -> bool:
+        import shutil
+        return shutil.which("bw") is not None
+
+    def bitwarden_status(self) -> dict:
+        if not self.bitwarden_available():
+            return {"status": "missing-cli"}
+        return self.bitwarden().status()
+
+    def bitwarden_login_apikey(self, client_id: str, client_secret: str) -> None:
+        self.bitwarden().login_apikey(client_id, client_secret)
+        self.audit.event("bitwarden.login", method="apikey", result="ok")
+
+    def set_hibp_key(self, key: str) -> None:
+        self.store.set(self.store.hibp_api_key(), key)
+
+    def set_imap_app_password(self, account_label: str, password: str) -> None:
+        self.store.set(self.store.imap_password_key(account_label), password)
+
+    def connect_gmail(self, label: str, client_secret_path: str) -> str:
+        """Run the Gmail OAuth flow (opens a browser) and store the token.
+
+        Returns the verified account email. Raises with a clear message if the
+        Google libraries aren't available in this build.
+        """
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+        except ImportError as exc:
+            raise RuntimeError(
+                "Gmail OAuth needs the Google libraries. In a source install run "
+                "`pip install \".[gmail]\"`. (IMAP works without them.)") from exc
+        from .scanners.gmail_scanner import SCOPES, GmailScanner
+        flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
+        creds = flow.run_local_server(port=0, prompt="consent")
+        self.store.set(self.store.oauth_token_key(label), creds.to_json())
+        from .config import EmailAccount
+        acct = next((a for a in self.cfg.accounts if a.label == label),
+                    EmailAccount(label=label, provider="gmail", address=""))
+        info = GmailScanner(acct, self.store).profile()
+        self.audit.event("auth.gmail", label=label, result="ok")
+        return info.get("emailAddress", "")
+
+    def connect_graph(self, label: str, client_id: str, on_message) -> None:
+        """Run the Microsoft Graph device-code flow.
+
+        `on_message(text)` is called with the 'go to URL and enter code' message
+        so the GUI can display it; this then blocks until the user completes it.
+        """
+        try:
+            import msal
+        except ImportError as exc:
+            raise RuntimeError(
+                "Outlook OAuth needs msal. In a source install run "
+                "`pip install \".[graph]\"`. (IMAP works without it.)") from exc
+        from .scanners.graph_scanner import SCOPES
+        self.store.set(f"graph.{label}.client_id", client_id)
+        cache = msal.SerializableTokenCache()
+        app = msal.PublicClientApplication(
+            client_id, authority="https://login.microsoftonline.com/common",
+            token_cache=cache)
+        flow = app.initiate_device_flow(scopes=SCOPES)
+        if "user_code" not in flow:
+            raise RuntimeError(f"Device flow failed: {flow.get('error_description')}")
+        on_message(flow["message"])
+        result = app.acquire_token_by_device_flow(flow)
+        if "access_token" not in result:
+            raise RuntimeError(f"Auth failed: {result.get('error_description')}")
+        self.store.set(self.store.oauth_token_key(label), cache.serialize())
+        self.audit.event("auth.graph", label=label, result="ok")
