@@ -82,10 +82,10 @@ if sys.platform == "darwin":
     )
     coll = COLLECT(exe, a.binaries, a.datas, name="RPHE")
     app = BUNDLE(
-        coll, name="RPHE.app", icon=None,
+        coll, name="RPHE.app", icon=str(ROOT / "packaging" / "RPHE.icns"),
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.7.1",
+            "CFBundleShortVersionString": "0.7.2",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.
@@ -97,4 +97,5 @@ else:
     exe = EXE(
         pyz, a.scripts, a.binaries, a.datas, [], name="RPHE",
         console=False, disable_windowed_traceback=False,
+        icon=str(ROOT / "packaging" / "RPHE.ico"),
     )

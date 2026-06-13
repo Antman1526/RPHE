@@ -34,3 +34,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Icon build intermediates (final RPHE.icns/.ico are committed)
+packaging/RPHE.iconset/
+packaging/icon_preview.png
