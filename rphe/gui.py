@@ -12,7 +12,9 @@ thread via a result queue. Same engine as the CLI, so behaviour is identical.
 """
 from __future__ import annotations
 
+import os
 import queue
+import sys
 import threading
 import time
 from typing import Callable, Optional
@@ -93,8 +95,19 @@ class RpheApp(ctk.CTk if ctk else object):
             self.bind_all(ev, self._mark_active, add="+")
         self.after(30_000, self._check_idle)
 
-        self.show_page("dashboard")
+        self.show_page(self._initial_page())
         self.after(200, self.refresh_status)
+
+    def _initial_page(self) -> str:
+        """Which page to open on launch. Defaults to 'dashboard'; overridable via
+        `--start-page <name>` (open … --args --start-page connect) or the
+        RPHE_START_PAGE env var. Useful for deep-linking and screenshots."""
+        page = os.environ.get("RPHE_START_PAGE", "dashboard")
+        if "--start-page" in sys.argv:
+            i = sys.argv.index("--start-page")
+            if i + 1 < len(sys.argv):
+                page = sys.argv[i + 1]
+        return page if page in self.pages else "dashboard"
 
     # ===================================================================== UI
     def _build_sidebar(self):
