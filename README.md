@@ -103,9 +103,12 @@ quarantine xattr, and code-signing/notarization removes the issue entirely.
   Trigger: `git tag v0.2.1 && git push origin v0.2.1`, or run the workflow
   manually (**Actions → Build installers → Run workflow**) to get artifacts.
 
-> The GUI needs a **Tk-enabled Python** (the python.org installer includes it;
-> Homebrew Python may not — use the python.org build to package). The CLI needs
-> no GUI libraries.
+> The GUI needs a **Tk-enabled Python**. On Apple Silicon, prefer an
+> **arm64-only** one (e.g. Homebrew `python3.11`, which ships Tk) — a
+> *universal2* build (the python.org framework) makes PyInstaller run
+> `lipo -thin arm64`, which can fail on a cold cache. `build_macos.sh` auto-picks
+> a suitable Python (override with `PYBIN=…`); CI uses an arm64-only Python. The
+> CLI needs no GUI libraries.
 
 ---
 
