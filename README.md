@@ -2,7 +2,7 @@
 
 ## Download
 
-Get the latest installers from the **[Releases page](https://github.com/Antman1526/RPHE_Claude/releases/latest)**:
+Get the latest installers from the **[Releases page](https://github.com/Antman1526/RPHE/releases/latest)**:
 
 | Platform | File | First launch (unsigned app) |
 |---|---|---|
@@ -493,6 +493,13 @@ Treat RPHE as a power-user convenience layer over those, not a replacement for
 provider-native security.
 
 ---
+
+## Authors
+
+Built by [**Antman1526**](https://github.com/Antman1526) together with
+**Claude** (Anthropic's Claude Code). Claude co-authored the engine, GUI,
+packaging, and documentation — see the `Co-Authored-By: Claude` trailers
+throughout the commit history.
 
 ## License
 MIT. Provided as-is; you are responsible for how you use it against your own
