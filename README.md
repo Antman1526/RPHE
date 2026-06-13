@@ -63,8 +63,11 @@ pages that mirror the goal:
 
 - **Dashboard** — what the tool does, live connection status (Email / Bitwarden /
   NordPass / Breach DB), and a one-click "Scan my accounts".
-- **Connect** — add inboxes (IMAP app-password or Gmail/Outlook OAuth), log in /
-  unlock Bitwarden, save your HIBP key — all straight into the OS keychain.
+- **Connect** — a calm, guided accordion of connection cards (Email · Bitwarden ·
+  Breach check · NordPass). One card open at a time, one primary button each.
+  Just type your email and RPHE detects the provider and pre-fills the IMAP host;
+  the Bitwarden card adapts to your state (sign in → unlock → connected). All
+  secrets go straight into the OS keychain.
 - **Scan & Fix** — at-risk accounts as cards (severity colour, phishing/reset
   badges) with a per-card **Rotate…** (pick from 5 vetted passwords).
 - **Vault Health** — audit every stored password (weak/reused/breached) and keep
@@ -374,6 +377,7 @@ RPHE/
 │   ├── audit.py                  # redacted append-only JSONL log
 │   ├── passwords.py              # CSPRNG generator + 5-candidate picker
 │   ├── breach.py                 # Have I Been Pwned integration
+│   ├── providers.py              # email-provider detection (Connect smart defaults)
 │   ├── linksafety.py             # anti-phishing reset-link verification
 │   ├── notify.py                 # cross-platform desktop notifications
 │   ├── schedule.py               # LaunchAgent / Scheduled Task installer

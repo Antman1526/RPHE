@@ -321,135 +321,170 @@ class RpheApp(ctk.CTk if ctk else object):
                        "missing-cli": ("todo", "CLI not found")}
             state, txt = mapping.get(s, ("todo", "Unknown"))
             self._set_check("bitwarden", state, txt)
-            if hasattr(self, "bw_status"):
-                email = stt.get("userEmail") or ""
-                self.bw_status.configure(text={
-                    "missing-cli": "Bitwarden CLI not found.",
-                    "unauthenticated": "Not logged in.",
-                    "locked": f"Locked{(' · ' + email) if email else ''}.",
-                    "unlocked": f"Unlocked ✓{(' · ' + email) if email else ''}."}.get(s, s))
+            # Keep the Connect-page Bitwarden pill in sync too, if it exists.
+            if "bitwarden" in getattr(self, "_connect_cards", {}):
+                pill = {"unlocked": ("ok", "Connected"), "locked": ("warn", "Locked"),
+                        "missing-cli": ("warn", "Missing")}.get(s, ("todo", "Not connected"))
+                self._set_conn_status("bitwarden", *pill)
         self._async(self.engine.bitwarden_status, done, "")
 
     # ---- Connect -----------------------------------------------------------
     def _page_connect(self, page):
         self._h1(page, "Connect your services").grid(row=0, column=0, sticky="w")
-        self._muted(page, "Everything you enter here is stored in your operating "
-                    "system's keychain — never sent to us or any third party.",
-                    wrap=720).grid(row=1, column=0, sticky="w", pady=(4, 16))
+        self._muted(page, "Connect these one at a time. Everything you enter is stored "
+                    "in your device's keychain — never sent to us.", wrap=720).grid(
+            row=1, column=0, sticky="w", pady=(6, 18))
+        self._connect_cards = {}
 
-        # --- Email ---
-        email = self._card(page)
-        email.grid(row=2, column=0, sticky="ew", pady=(0, 14))
-        ctk.CTkLabel(email, text="📧  Email inboxes", font=ctk.CTkFont(size=16, weight="bold"),
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 2))
-        self._muted(email, "Add the inbox(es) RPHE should scan. IMAP (with an app "
-                    "password) works for Gmail, Outlook, iCloud and Fastmail; or use "
-                    "OAuth for read-only Gmail/Outlook.", wrap=700).grid(
-            row=1, column=0, sticky="w", padx=16)
-        self.account_list = ctk.CTkFrame(email, fg_color="transparent")
-        self.account_list.grid(row=2, column=0, sticky="ew", padx=12, pady=8)
+        b = self._conn_card(page, "email", "✉", "Email inbox",
+                            "The mailbox RPHE scans for alerts", 2)
+        self._email_body(b)
+        b = self._conn_card(page, "bitwarden", "🔑", "Bitwarden",
+                            "Where your strong new passwords are saved", 3)
+        self._bw_body(b)
+        b = self._conn_card(page, "hibp", "🔎", "Breach check  ·  optional",
+                            "Look up your email in known breaches", 4)
+        self._hibp_body(b)
+        b = self._conn_card(page, "nordpass", "🗂", "NordPass",
+                            "Kept in sync with a CSV you import", 5)
+        self._nordpass_body(b)
+
+        self._refresh_bw_body()            # set the Bitwarden pill from live status
+        self._toggle_card("email")         # open the first card by default
+
+    # ---- collapsible card scaffold ----------------------------------------
+    def _conn_card(self, parent, key, icon, title, subtitle, row):
+        card = self._card(parent)
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=14)
+        header.grid_columnconfigure(2, weight=1)
+        ctk.CTkLabel(header, text=icon, font=ctk.CTkFont(size=18), width=24).grid(
+            row=0, column=0, rowspan=2, padx=(0, 12))
+        ctk.CTkLabel(header, text=title, font=ctk.CTkFont(size=15, weight="bold"),
+                     anchor="w").grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(header, text=subtitle, font=ctk.CTkFont(size=12), text_color=MUTED,
+                     anchor="w").grid(row=1, column=1, sticky="w")
+        pill = ctk.CTkLabel(header, text="…", font=ctk.CTkFont(size=12), text_color=MUTED,
+                            fg_color=("#eceef2", "#26262c"), corner_radius=12)
+        pill.grid(row=0, column=3, rowspan=2, padx=10, ipadx=8, ipady=3)
+        toggle = ctk.CTkButton(header, text="Open", width=74, height=30,
+                               fg_color="transparent", border_width=1,
+                               command=lambda k=key: self._toggle_card(k))
+        toggle.grid(row=0, column=4, rowspan=2)
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 14))
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_remove()
+        self._connect_cards[key] = {"body": body, "toggle": toggle, "pill": pill, "open": False}
+        return body
+
+    def _toggle_card(self, key):
+        for k, c in self._connect_cards.items():       # accordion: one open at a time
+            if k != key and c["open"]:
+                c["body"].grid_remove(); c["open"] = False; c["toggle"].configure(text="Open")
+        c = self._connect_cards[key]
+        if c["open"]:
+            c["body"].grid_remove(); c["open"] = False; c["toggle"].configure(text="Open")
+        else:
+            c["body"].grid(); c["open"] = True; c["toggle"].configure(text="Close")
+            if key == "bitwarden":
+                self._refresh_bw_body()
+
+    def _set_conn_status(self, key, state, text):
+        c = self._connect_cards.get(key)
+        if not c:
+            return
+        palette = {"ok": (GREEN, ("#e6f4ea", "#10331f")),
+                   "warn": (AMBER, ("#fdf0dd", "#3a2a10")),
+                   "ready": (ACCENT_TEXT, ("#e8eefc", "#16264e")),
+                   "todo": (MUTED, ("#eceef2", "#26262c"))}
+        fg, bg = palette.get(state, palette["todo"])
+        c["pill"].configure(text=text, text_color=fg, fg_color=bg)
+
+    @staticmethod
+    def _open_url(url):
+        import webbrowser
+        if url:
+            webbrowser.open(url)
+
+    # ---- Email card --------------------------------------------------------
+    def _email_body(self, body):
+        self.account_list = ctk.CTkFrame(body, fg_color="transparent")
+        self.account_list.grid(row=0, column=0, sticky="ew")
         self.account_list.grid_columnconfigure(0, weight=1)
         self._refresh_account_list()
-        self._build_add_inbox(email).grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 14))
 
-        # --- Bitwarden ---
-        bw = self._card(page)
-        bw.grid(row=3, column=0, sticky="ew", pady=(0, 14))
-        ctk.CTkLabel(bw, text="🟦  Bitwarden", font=ctk.CTkFont(size=16, weight="bold"),
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 2))
-        self.bw_status = ctk.CTkLabel(bw, text="Checking…", anchor="w", text_color=MUTED)
-        self.bw_status.grid(row=1, column=0, sticky="w", padx=16)
-        bwf = ctk.CTkFrame(bw, fg_color="transparent")
-        bwf.grid(row=2, column=0, sticky="ew", padx=12, pady=10)
-        bwf.grid_columnconfigure((0, 1), weight=1)
-        self.bw_cid = ctk.CTkEntry(bwf, placeholder_text="API key client_id (optional)")
-        self.bw_cid.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        self.bw_secret = ctk.CTkEntry(bwf, placeholder_text="client_secret", show="•")
-        self.bw_secret.grid(row=0, column=1, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(bwf, text="Log in", command=self.on_bw_login).grid(
-            row=0, column=2, padx=4)
-        ctk.CTkButton(bwf, text="Unlock vault…", command=self.on_unlock).grid(
-            row=1, column=2, padx=4, pady=4)
-        ctk.CTkButton(bwf, text="Refresh", fg_color="transparent", border_width=1,
-                      command=self.refresh_status).grid(row=1, column=1, sticky="e", padx=4)
+        form = ctk.CTkFrame(body, fg_color=("#f6f7f9", "#191920"), corner_radius=10)
+        form.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        form.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(form, text="Add an inbox", font=ctk.CTkFont(size=13, weight="bold")
+                     ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 4))
+        inner = ctk.CTkFrame(form, fg_color="transparent")
+        inner.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 12))
+        inner.grid_columnconfigure(0, weight=1)
 
-        # --- HIBP ---
-        hibp = self._card(page)
-        hibp.grid(row=4, column=0, sticky="ew", pady=(0, 14))
-        ctk.CTkLabel(hibp, text="🔎  Breach database (Have I Been Pwned)",
-                     font=ctk.CTkFont(size=16, weight="bold"), anchor="w").grid(
-            row=0, column=0, sticky="w", padx=16, pady=(14, 2))
-        self._muted(hibp, "Optional. The free password check needs no key. Add a HIBP "
-                    "API key to also look up which breaches your email appears in.",
-                    wrap=700).grid(row=1, column=0, sticky="w", padx=16)
-        hf = ctk.CTkFrame(hibp, fg_color="transparent")
-        hf.grid(row=2, column=0, sticky="ew", padx=12, pady=10)
-        hf.grid_columnconfigure(0, weight=1)
-        self.hibp_key = ctk.CTkEntry(hf, placeholder_text="HIBP API key", show="•")
-        self.hibp_key.grid(row=0, column=0, sticky="ew", padx=4)
-        ctk.CTkButton(hf, text="Save key", command=self.on_save_hibp).grid(row=0, column=1, padx=4)
+        ctk.CTkLabel(inner, text="Your email address", font=ctk.CTkFont(size=12),
+                     text_color=MUTED, anchor="w").grid(row=0, column=0, sticky="w")
+        self.in_address = ctk.CTkEntry(inner, placeholder_text="you@gmail.com")
+        self.in_address.grid(row=1, column=0, sticky="ew", pady=(2, 2))
+        self.in_address.bind("<KeyRelease>", lambda e: self._on_email_detect())
+        self.detect_lbl = ctk.CTkLabel(inner, text="", font=ctk.CTkFont(size=12),
+                                       text_color=GREEN, anchor="w")
+        self.detect_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
-        # --- NordPass ---
-        npc = self._card(page)
-        npc.grid(row=5, column=0, sticky="ew", pady=(0, 14))
-        ctk.CTkLabel(npc, text="⬛  NordPass", font=ctk.CTkFont(size=16, weight="bold"),
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 2))
-        self._muted(npc, "NordPass has no write API, so RPHE keeps it in sync via a CSV "
-                    "you import (Settings → Import). Bitwarden is the automated source "
-                    "of truth.", wrap=700).grid(row=1, column=0, sticky="w", padx=16)
-        ctk.CTkButton(npc, text="Show import steps", fg_color="transparent", border_width=1,
-                      command=self.on_nordpass).grid(row=2, column=0, sticky="w",
-                                                     padx=16, pady=(8, 14))
+        ctk.CTkLabel(inner, text="App password", font=ctk.CTkFont(size=12),
+                     text_color=MUTED, anchor="w").grid(row=3, column=0, sticky="w")
+        self.in_app_pw = ctk.CTkEntry(inner, placeholder_text="paste an app password", show="•")
+        self.in_app_pw.grid(row=4, column=0, sticky="ew", pady=(2, 2))
+        self.apppw_link = ctk.CTkButton(inner, text="How do I get an app password?",
+                                        fg_color="transparent", hover=False, anchor="w",
+                                        text_color=ACCENT_TEXT,
+                                        command=lambda: self._open_url(
+                                            getattr(self, "_apppw_url", "")
+                                            or "https://support.google.com/accounts/answer/185833"))
+        self.apppw_link.grid(row=5, column=0, sticky="w", pady=(0, 6))
+        self.in_imap_host = ctk.CTkEntry(inner, placeholder_text="IMAP host (filled automatically)")
+        self.in_imap_host.grid(row=6, column=0, sticky="ew", pady=(0, 10))
 
-    def _build_add_inbox(self, parent):
-        box = ctk.CTkFrame(parent, fg_color=("#f6f7f9", "#191920"), corner_radius=10)
-        box.grid_columnconfigure((1, 3), weight=1)
-        ctk.CTkLabel(box, text="Add an inbox", font=ctk.CTkFont(size=13, weight="bold")).grid(
-            row=0, column=0, columnspan=4, sticky="w", padx=12, pady=(10, 4))
-        ctk.CTkLabel(box, text="Label").grid(row=1, column=0, padx=(12, 4), pady=4, sticky="e")
-        self.in_label = ctk.CTkEntry(box, placeholder_text="personal-gmail")
-        self.in_label.grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ctk.CTkLabel(box, text="Provider").grid(row=1, column=2, padx=(12, 4), sticky="e")
-        self.in_provider = ctk.CTkOptionMenu(box, values=["imap", "gmail", "graph", "eml"],
-                                             command=lambda _: self._refresh_inbox_extra())
-        self.in_provider.grid(row=1, column=3, sticky="ew", padx=4, pady=4)
-        ctk.CTkLabel(box, text="Email").grid(row=2, column=0, padx=(12, 4), pady=4, sticky="e")
-        self.in_address = ctk.CTkEntry(box, placeholder_text="you@example.com")
-        self.in_address.grid(row=2, column=1, columnspan=3, sticky="ew", padx=4, pady=4)
-        self.inbox_extra = ctk.CTkFrame(box, fg_color="transparent")
-        self.inbox_extra.grid(row=3, column=0, columnspan=4, sticky="ew", padx=8, pady=4)
-        self.inbox_extra.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(box, text="Add inbox", command=self.on_add_inbox).grid(
-            row=4, column=3, sticky="e", padx=8, pady=(4, 10))
-        self._refresh_inbox_extra()
-        return box
+        btns = ctk.CTkFrame(inner, fg_color="transparent")
+        btns.grid(row=7, column=0, sticky="w")
+        ctk.CTkButton(btns, text="Connect inbox", command=self.on_add_inbox).pack(side="left")
+        self.oauth_alt = ctk.CTkButton(btns, text="", fg_color="transparent", hover=False,
+                                       text_color=ACCENT_TEXT, command=self._oauth_connect)
+        self.oauth_alt.pack(side="left", padx=12)
+        self.oauth_alt.pack_forget()
+        ctk.CTkLabel(inner, text="🔒 Stored in your device keychain, never sent to us.",
+                     font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w").grid(
+            row=8, column=0, sticky="w", pady=(8, 0))
+        self._set_conn_status("email", "ok" if self.engine.cfg.accounts else "todo",
+                              "Connected" if self.engine.cfg.accounts else "Not connected")
 
-    def _refresh_inbox_extra(self):
-        for w in self.inbox_extra.winfo_children():
-            w.destroy()
-        p = self.in_provider.get()
-        if p == "imap":
-            ctk.CTkLabel(self.inbox_extra, text="IMAP host").grid(row=0, column=0, padx=8, pady=3, sticky="e")
-            self.in_imap_host = ctk.CTkEntry(self.inbox_extra, placeholder_text="imap.gmail.com")
-            self.in_imap_host.grid(row=0, column=1, sticky="ew", padx=4, pady=3)
-            self.in_app_pw = ctk.CTkEntry(self.inbox_extra, placeholder_text="app password", show="•")
-            self.in_app_pw.grid(row=1, column=1, sticky="ew", padx=4, pady=3)
-            ctk.CTkLabel(self.inbox_extra, text="App password").grid(row=1, column=0, padx=8, sticky="e")
-        elif p == "gmail":
-            self._muted(self.inbox_extra, "After 'Add inbox', click Connect to authorise "
-                        "read-only Gmail in your browser.").grid(row=0, column=0, columnspan=2, sticky="w", padx=8)
-            ctk.CTkButton(self.inbox_extra, text="Connect Gmail…", command=self.on_connect_gmail).grid(
-                row=1, column=1, sticky="e", padx=4, pady=4)
-        elif p == "graph":
-            self.in_client_id = ctk.CTkEntry(self.inbox_extra, placeholder_text="Entra app client ID")
-            self.in_client_id.grid(row=0, column=1, sticky="ew", padx=4, pady=3)
-            ctk.CTkLabel(self.inbox_extra, text="Client ID").grid(row=0, column=0, padx=8, sticky="e")
-            ctk.CTkButton(self.inbox_extra, text="Connect Outlook…", command=self.on_connect_graph).grid(
-                row=1, column=1, sticky="e", padx=4, pady=4)
+    def _on_email_detect(self):
+        from .providers import detect_provider
+        info = detect_provider(self.in_address.get())
+        self._detected = info
+        self._apppw_url = info.app_password_url
+        if info.imap_host:
+            self.in_imap_host.delete(0, "end")
+            self.in_imap_host.insert(0, info.imap_host)
+            self.detect_lbl.configure(text=f"{info.name} detected — we'll use {info.imap_host}",
+                                      text_color=GREEN)
         else:
-            self._muted(self.inbox_extra, "Put exported .eml files in a folder and set it "
-                        "as the address/folder. No account access needed.").grid(
-                row=0, column=0, sticky="w", padx=8)
+            self.detect_lbl.configure(text=(info.note or ""), text_color=MUTED)
+        if info.oauth:
+            self.oauth_alt.configure(text=f"Advanced: connect with {info.name} (read-only) →")
+            self.oauth_alt.pack(side="left", padx=12)
+        else:
+            self.oauth_alt.pack_forget()
+
+    def _oauth_connect(self):
+        info = getattr(self, "_detected", None)
+        if info and info.oauth == "gmail":
+            self.on_connect_gmail()
+        elif info and info.oauth == "graph":
+            self.on_connect_graph()
 
     def _refresh_account_list(self):
         for w in self.account_list.winfo_children():
@@ -469,6 +504,82 @@ class RpheApp(ctk.CTk if ctk else object):
                           border_width=1, text_color=RED,
                           command=lambda lbl=a.label: self.on_remove_inbox(lbl)).grid(
                 row=0, column=1, padx=8)
+
+    # ---- Bitwarden card (adapts to login/lock state) ----------------------
+    def _bw_body(self, body):
+        self.bw_body_inner = ctk.CTkFrame(body, fg_color="transparent")
+        self.bw_body_inner.grid(row=0, column=0, sticky="ew")
+        self.bw_body_inner.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(self.bw_body_inner, text="Checking…", text_color=MUTED, anchor="w").grid(
+            row=0, column=0, sticky="w")
+
+    def _refresh_bw_body(self):
+        self._async(self.engine.bitwarden_status, self._render_bw, "")
+
+    def _render_bw(self, st):
+        inner = self.bw_body_inner
+        for w in inner.winfo_children():
+            w.destroy()
+        s = st.get("status", "unknown")
+        email = st.get("userEmail") or ""
+        if s == "unlocked":
+            ctk.CTkLabel(inner, text=f"Connected ✓   {email}", text_color=GREEN,
+                         anchor="w").grid(row=0, column=0, sticky="w")
+            ctk.CTkButton(inner, text="Lock vault", fg_color="transparent", border_width=1,
+                          command=self.on_lock).grid(row=1, column=0, sticky="w", pady=8)
+            self._set_conn_status("bitwarden", "ok", "Connected")
+        elif s == "locked":
+            ctk.CTkLabel(inner, text=f"Signed in{(' as ' + email) if email else ''} — "
+                         "unlock to use it.", text_color=MUTED, anchor="w").grid(
+                row=0, column=0, sticky="w")
+            ctk.CTkButton(inner, text="Unlock vault", command=self.on_unlock).grid(
+                row=1, column=0, sticky="w", pady=8)
+            self._set_conn_status("bitwarden", "warn", "Locked")
+        elif s == "missing-cli":
+            ctk.CTkLabel(inner, text="Bitwarden CLI not found on this system.",
+                         text_color=AMBER, anchor="w").grid(row=0, column=0, sticky="w")
+            self._set_conn_status("bitwarden", "warn", "Missing")
+        else:
+            ctk.CTkLabel(inner, text="Sign in with a Bitwarden API key "
+                         "(bitwarden.com → Settings → Security → Keys).", text_color=MUTED,
+                         anchor="w", wraplength=520, justify="left").grid(
+                row=0, column=0, sticky="w")
+            self.bw_cid = ctk.CTkEntry(inner, placeholder_text="client_id")
+            self.bw_cid.grid(row=1, column=0, sticky="ew", pady=(8, 4))
+            self.bw_secret = ctk.CTkEntry(inner, placeholder_text="client_secret", show="•")
+            self.bw_secret.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+            ctk.CTkButton(inner, text="Sign in", command=self.on_bw_login).grid(
+                row=3, column=0, sticky="w", pady=8)
+            ctk.CTkButton(inner, text="Where do I find this?", fg_color="transparent",
+                          hover=False, text_color=ACCENT_TEXT,
+                          command=lambda: self._open_url(
+                              "https://bitwarden.com/help/personal-api-key/")).grid(
+                row=4, column=0, sticky="w")
+            self._set_conn_status("bitwarden", "todo", "Not connected")
+
+    # ---- Breach + NordPass cards ------------------------------------------
+    def _hibp_body(self, body):
+        present = self.engine.store.get(self.engine.store.hibp_api_key()) is not None
+        ctk.CTkLabel(body, text=("A key is saved ✓" if present else
+                     "Optional — the free password check needs no key. Add a HIBP key to "
+                     "also look up which breaches your email appears in."),
+                     text_color=(GREEN if present else MUTED), anchor="w",
+                     wraplength=520, justify="left").grid(row=0, column=0, sticky="w")
+        self.hibp_key = ctk.CTkEntry(body, placeholder_text="HIBP API key", show="•")
+        self.hibp_key.grid(row=1, column=0, sticky="ew", pady=(8, 4))
+        ctk.CTkButton(body, text="Save key", command=self.on_save_hibp).grid(
+            row=2, column=0, sticky="w", pady=4)
+        self._set_conn_status("hibp", "ok" if present else "todo",
+                              "Connected" if present else "Optional")
+
+    def _nordpass_body(self, body):
+        ctk.CTkLabel(body, text="NordPass has no write API, so RPHE keeps it in sync via a "
+                     "CSV you import (NordPass → Settings → Import). Bitwarden is the "
+                     "automated source of truth.", text_color=MUTED, anchor="w",
+                     wraplength=520, justify="left").grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(body, text="Show import steps", fg_color="transparent", border_width=1,
+                      command=self.on_nordpass).grid(row=1, column=0, sticky="w", pady=8)
+        self._set_conn_status("nordpass", "ready", "Ready")
 
     # ---- Scan & Fix --------------------------------------------------------
     def _page_scan(self, page):
@@ -634,55 +745,71 @@ class RpheApp(ctk.CTk if ctk else object):
         self._refresh_dashboard()
 
     # ---- connect actions ---
-    def on_add_inbox(self):
-        label = self.in_label.get().strip()
-        if not label:
-            messagebox.showinfo("RPHE", "Give the inbox a short label first.")
-            return
-        provider = self.in_provider.get()
-        acct = EmailAccount(label=label, provider=provider,
-                            address=self.in_address.get().strip())
-        if provider == "imap":
-            acct.imap_host = getattr(self, "in_imap_host", None) and self.in_imap_host.get().strip() or ""
-            pw = getattr(self, "in_app_pw", None) and self.in_app_pw.get() or ""
-            if pw:
-                self.engine.set_imap_app_password(label, pw)
-        elif provider == "eml":
-            acct.folders = [self.in_address.get().strip() or "."]
-        # replace if same label, else append
-        accts = [a for a in self.engine.cfg.accounts if a.label != label]
+    def _save_account(self, acct):
+        accts = [a for a in self.engine.cfg.accounts if a.label != acct.label]
         accts.append(acct)
         self.engine.cfg.accounts = accts
         self.engine.save(self.engine.cfg)
         self._refresh_account_list()
+        self._set_conn_status("email", "ok", "Connected")
         self.refresh_status()
-        self.status.configure(text=f"Inbox '{label}' saved.")
+
+    def on_add_inbox(self):
+        from .providers import suggested_label
+        email = self.in_address.get().strip()
+        if not email:
+            messagebox.showinfo("RPHE", "Enter your email address first.")
+            return
+        host = self.in_imap_host.get().strip()
+        if not host:
+            messagebox.showinfo("RPHE", "Enter your provider's IMAP host "
+                                "(it usually fills in automatically).")
+            return
+        label = suggested_label(email)
+        acct = EmailAccount(label=label, provider="imap", address=email, imap_host=host)
+        pw = self.in_app_pw.get()
+        if pw:
+            self.engine.set_imap_app_password(label, pw)
+        self._save_account(acct)
+        self.in_app_pw.delete(0, "end")
+        self.status.configure(text=f"Inbox '{label}' connected.")
 
     def on_remove_inbox(self, label):
         self.engine.cfg.accounts = [a for a in self.engine.cfg.accounts if a.label != label]
         self.engine.save(self.engine.cfg)
         self.engine.store.delete(self.engine.store.imap_password_key(label))
         self._refresh_account_list()
+        self._set_conn_status("email", "ok" if self.engine.cfg.accounts else "todo",
+                              "Connected" if self.engine.cfg.accounts else "Not connected")
         self.refresh_status()
 
     def on_connect_gmail(self):
-        self.on_add_inbox()
-        label = self.in_label.get().strip()
+        from .providers import suggested_label
+        email = self.in_address.get().strip()
+        if not email:
+            messagebox.showinfo("RPHE", "Enter your Gmail address first.")
+            return
+        label = suggested_label(email)
+        self._save_account(EmailAccount(label=label, provider="gmail", address=email))
         path = filedialog.askopenfilename(title="Select client_secret.json",
                                           filetypes=[("JSON", "*.json")])
         if not path:
             return
         self._async(lambda: self.engine.connect_gmail(label, path),
-                    lambda email: self.status.configure(text=f"Gmail connected: {email}"),
+                    lambda email_addr: self.status.configure(text=f"Gmail connected: {email_addr}"),
                     "Opening browser for Gmail consent…")
 
     def on_connect_graph(self):
-        self.on_add_inbox()
-        label = self.in_label.get().strip()
-        cid = getattr(self, "in_client_id", None) and self.in_client_id.get().strip() or ""
-        if not cid:
-            messagebox.showinfo("RPHE", "Enter the Entra client ID first.")
+        from .providers import suggested_label
+        email = self.in_address.get().strip()
+        if not email:
+            messagebox.showinfo("RPHE", "Enter your Outlook address first.")
             return
+        cid = self._ask_secret("Connect Outlook", "Entra app client ID:", show="")
+        if not cid:
+            return
+        label = suggested_label(email)
+        self._save_account(EmailAccount(label=label, provider="graph", address=email))
 
         def show_msg(text):
             self.after(0, lambda: messagebox.showinfo("Connect Outlook", text))
@@ -696,16 +823,16 @@ class RpheApp(ctk.CTk if ctk else object):
             messagebox.showinfo("RPHE", "Enter both client_id and client_secret.")
             return
         self._async(lambda: self.engine.bitwarden_login_apikey(cid, sec),
-                    lambda _: (self.bw_secret.delete(0, "end"), self.refresh_status(),
-                               self.status.configure(text="Bitwarden logged in.")),
-                    "Logging in to Bitwarden…")
+                    lambda _: (self._refresh_bw_body(),
+                               self.status.configure(text="Signed in — now unlock your vault.")),
+                    "Signing in to Bitwarden…")
 
     def on_unlock(self):
         pw = self._ask_secret("Unlock Bitwarden", "Bitwarden master password:")
         if not pw:
             return
         self._async(lambda: self.engine.unlock_bitwarden(pw),
-                    lambda _: (self.refresh_status(),
+                    lambda _: (self._refresh_bw_body(), self.refresh_status(),
                                self.status.configure(text="Bitwarden unlocked.")),
                     "Unlocking Bitwarden…")
 
@@ -715,6 +842,7 @@ class RpheApp(ctk.CTk if ctk else object):
             return
         self.engine.set_hibp_key(key)
         self.hibp_key.delete(0, "end")
+        self._set_conn_status("hibp", "ok", "Connected")
         self.refresh_status()
         self.status.configure(text="HIBP key saved to keychain.")
 
