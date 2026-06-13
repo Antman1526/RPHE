@@ -73,6 +73,15 @@ SAMPLE_MESSAGES: list[dict] = [
         "received_at": _ago(6),
     },
     {
+        "message_id": "demo-phishing-1",  # genuine-looking sender, look-alike link
+        "from": "PayPal Service <service@paypal.com>",
+        "subject": "Unusual activity — reset your password immediately",
+        "body": ("We detected a suspicious sign-in. Reset your password now: "
+                 "https://paypal-account-verify.ru/reset?token=PHISH. If this "
+                 "wasn't you, secure your account."),
+        "received_at": _ago(1),
+    },
+    {
         "message_id": "demo-marketing-1",  # should NOT be flagged
         "from": "Spotify <news@spotify.com>",
         "subject": "Your Discover Weekly is ready 🎵",

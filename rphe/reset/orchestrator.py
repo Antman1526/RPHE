@@ -71,16 +71,24 @@ class ResetOrchestrator:
     # --- plan building (always available, no browser needed) ----------------
     def build_plan(self, signal: BreachSignal) -> ResetPlan:
         domain = signal.sender_domain
+        # Never auto-fill an untrusted (possible-phishing) link.
         automatable = (
             self.automate
             and bool(signal.reset_url)
+            and getattr(signal, "reset_url_trusted", True)
             and domain not in _NEVER_AUTOMATE
         )
+        first = ("Confirm this alert is genuine: check the sender domain "
+                 f"({domain or 'unknown'}) and that the URL host matches the "
+                 "real service. If anything looks off, STOP and go to the "
+                 "site by typing its address yourself.")
+        if signal.reset_url and not getattr(signal, "reset_url_trusted", True):
+            first = ("⚠ THIS RESET LINK LOOKS SUSPICIOUS — "
+                     f"{getattr(signal, 'reset_url_note', '')} "
+                     "Do NOT click the emailed link. Open the service yourself by "
+                     "typing its address, then use 'Forgot password' there.")
         steps = [
-            ResetStep(1, "Confirm this alert is genuine: check the sender domain "
-                         f"({domain or 'unknown'}) and that the URL host matches the "
-                         "real service. If anything looks off, STOP and go to the "
-                         "site by typing its address yourself.", manual_required=True),
+            ResetStep(1, first, manual_required=True),
             ResetStep(2, "Open the reset page and begin 'Forgot password'."),
             ResetStep(3, "When prompted, paste the new password RPHE generated "
                          "(already copied to clipboard / written to Bitwarden draft)."),

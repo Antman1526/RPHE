@@ -166,6 +166,68 @@ class Engine:
         return RotationResult(service_name, username, True, item.item_id, np_ok,
                               verified, pk)
 
+    # --- lockout-safe rotation lifecycle -----------------------------------
+    def list_pending(self) -> list:
+        """Rotations written to the vault but not yet confirmed working."""
+        return self.bitwarden().list_pending()
+
+    def confirm_rotation(self, item_id: str) -> None:
+        self.bitwarden().set_status(item_id, "confirmed")
+        self.audit.event("rotation.confirm", item_id=item_id)
+
+    def revert_rotation(self, item_id: str) -> bool:
+        """Roll a vault item back to its previous password (e.g. reset abandoned)."""
+        ok = self.bitwarden().revert(item_id)
+        self.audit.event("rotation.revert", item_id=item_id, result="ok" if ok else "no-history")
+        return ok
+
+    # --- vault-wide audit (weak / reused / breached) -----------------------
+    def audit_vault(self, check_pwned: bool = True, weak_below_bits: int = 60) -> dict:
+        """Audit EVERY Bitwarden login for breached, reused and weak passwords.
+
+        Uses the free HIBP k-anonymity check (no password leaves the machine) and
+        a charset-entropy heuristic. Plaintext is read into memory for the checks
+        and never persisted or logged — only issue flags + counts are returned.
+        """
+        import hashlib
+
+        from .passwords import password_strength_bits
+        logins = self.bitwarden().audit_logins()
+        checker = self.breach_checker()
+
+        by_fp: dict[str, list] = {}
+        for l in logins:
+            if l["password"]:
+                fp = hashlib.sha256(l["password"].encode()).hexdigest()[:8]
+                by_fp.setdefault(fp, []).append(l["name"])
+
+        pwned_cache: dict[str, int] = {}
+        findings = []
+        for l in logins:
+            pw = l["password"]
+            if not pw:
+                continue
+            fp = hashlib.sha256(pw.encode()).hexdigest()[:8]
+            issues = []
+            if check_pwned:
+                if fp not in pwned_cache:
+                    try:
+                        pwned_cache[fp] = checker.pwned_password_count(pw)
+                    except Exception:
+                        pwned_cache[fp] = 0
+                if pwned_cache[fp] > 0:
+                    issues.append(f"breached×{pwned_cache[fp]}")
+            if len(by_fp.get(fp, [])) > 1:
+                issues.append("reused")
+            bits = password_strength_bits(pw)
+            if bits < weak_below_bits:
+                issues.append(f"weak (~{bits:.0f} bits)")
+            if issues:
+                findings.append({"name": l["name"], "username": l["username"],
+                                 "item_id": l["item_id"], "issues": issues})
+        self.audit.event("vault.audit", scanned=len(logins), flagged=len(findings))
+        return {"scanned": len(logins), "findings": findings}
+
     # --- sync ---------------------------------------------------------------
     def sync_report(self):
         from .vaults import SyncVerifier

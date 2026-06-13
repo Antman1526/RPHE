@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rphe"
-version = "0.2.2"
+version = "0.3.0"
 description = "Recovery & Password-Hygiene Engine — scan email for breaches, rotate passwords, sync Bitwarden + NordPass."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,7 @@ gmail = ["google-api-python-client>=2.120.0", "google-auth-oauthlib>=1.2.0", "go
 graph = ["msal>=1.28.0", "requests>=2.31.0"]
 automate = ["playwright>=1.42.0"]
 clipboard = ["pyperclip>=1.8.2"]
+dev = ["pytest>=8.0", "ruff>=0.4"]
 all = [
     "google-api-python-client>=2.120.0", "google-auth-oauthlib>=1.2.0", "google-auth>=2.28.0",
     "msal>=1.28.0", "requests>=2.31.0", "playwright>=1.42.0", "pyperclip>=1.8.2",
@@ -38,3 +39,7 @@ include = ["rphe*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

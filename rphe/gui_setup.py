@@ -85,7 +85,7 @@ class SettingsWindow:
                 res = fn()
                 self.win.after(0, lambda: on_done(res))
             except Exception as exc:
-                self.win.after(0, lambda: self._error(exc))
+                self.win.after(0, lambda exc=exc: self._error(exc))
         threading.Thread(target=worker, daemon=True).start()
 
     def _error(self, exc):

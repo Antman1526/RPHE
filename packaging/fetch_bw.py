@@ -13,6 +13,7 @@ Env:    GITHUB_TOKEN (optional) raises the GitHub API rate limit.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -26,6 +27,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / "packaging" / "vendor"
 RELEASES_API = "https://api.github.com/repos/bitwarden/clients/releases?per_page=100"
+
+# Pinned for reproducible, auditable builds. Override with --version cli-vX.Y.Z
+# or the RPHE_BW_TAG env var. Bump deliberately, not automatically.
+DEFAULT_TAG = "cli-v2026.5.0"
 
 _PLATFORM = {"darwin": "macos", "win32": "windows", "linux": "linux"}.get(sys.platform)
 
@@ -56,31 +61,39 @@ def _request(url: str, *, api: bool = False) -> bytes:
 
 
 def _find_asset(pinned_tag: str | None):
-    """Return (tag, asset_name, download_url) for the bw zip of this platform."""
+    """Return (tag, asset_name, download_url, sha256) for this platform's bw zip."""
     releases = json.loads(_request(RELEASES_API, api=True))
     cli_releases = [r for r in releases if r.get("tag_name", "").startswith("cli-v")]
     if pinned_tag:
-        cli_releases = [r for r in cli_releases if r["tag_name"] == pinned_tag] or cli_releases
+        matched = [r for r in cli_releases if r["tag_name"] == pinned_tag]
+        if not matched:
+            raise SystemExit(f"Pinned release {pinned_tag} not found in the API window.")
+        cli_releases = matched
     for rel in cli_releases:  # GitHub returns newest first
         candidates = []
         for a in rel.get("assets", []):
             name = a["name"]
-            if name.startswith(f"bw-{_PLATFORM}-") and name.endswith(".zip"):
-                candidates.append((name, a["browser_download_url"]))
+            # Match e.g. bw-macos-X.Y.Z.zip; exclude arch-specific/oss for the
+            # widest-compatibility default (x64 runs on Intel + Apple Silicon).
+            if (name.startswith(f"bw-{_PLATFORM}-") and name.endswith(".zip")
+                    and "oss" not in name and "arm64" not in name):
+                digest = (a.get("digest") or "").split(":")[-1]
+                candidates.append((name, a["browser_download_url"], digest))
         if candidates:
-            # Prefer the standard build over an "-oss-" variant if both exist.
-            candidates.sort(key=lambda c: ("oss" in c[0], c[0]))
-            name, url = candidates[0]
-            return rel["tag_name"], name, url
-    raise SystemExit(f"No bw-{_PLATFORM}-*.zip asset found in recent CLI releases.")
+            candidates.sort(key=lambda c: c[0])
+            name, url, digest = candidates[0]
+            return rel["tag_name"], name, url, digest
+    raise SystemExit(f"No bw-{_PLATFORM}-*.zip asset found for {pinned_tag or 'latest'}.")
 
 
 def main() -> None:
     if _PLATFORM is None:
         raise SystemExit(f"Unsupported platform: {sys.platform}")
-    pinned = None
+    pinned = os.environ.get("RPHE_BW_TAG") or DEFAULT_TAG
     if "--version" in sys.argv:
         pinned = sys.argv[sys.argv.index("--version") + 1]
+    if "--latest" in sys.argv:
+        pinned = None
 
     VENDOR.mkdir(parents=True, exist_ok=True)
     member_name = "bw.exe" if _PLATFORM == "windows" else "bw"
@@ -90,9 +103,21 @@ def main() -> None:
         print(f"[fetch_bw] {existing.name} already present ({ver}); use --force to redownload.")
         return
 
-    tag, name, url = _find_asset(pinned)
+    tag, name, url, digest = _find_asset(pinned)
     print(f"[fetch_bw] downloading {name} ({tag})")
     blob = _request(url)
+
+    # Supply-chain integrity: verify the bytes against the API-published sha256.
+    if digest:
+        actual = hashlib.sha256(blob).hexdigest()
+        if actual.lower() != digest.lower():
+            raise SystemExit(
+                f"[fetch_bw] SHA-256 MISMATCH for {name}!\n"
+                f"  expected {digest}\n  got      {actual}\nAborting.")
+        print(f"[fetch_bw] sha256 verified: {actual[:16]}…")
+    else:
+        print("[fetch_bw] WARNING: no digest published for this asset; skipping verification.")
+
     zf = zipfile.ZipFile(io.BytesIO(blob))
 
     member = next((m for m in zf.namelist() if m.split("/")[-1] == member_name),

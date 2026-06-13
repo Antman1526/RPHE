@@ -53,6 +53,8 @@ class BreachSignal:
     account_hint: Optional[str] = None  # the email/username the alert targets
     rationale: str = ""               # why the classifier flagged it (for audit)
     raw_snippet: str = ""             # short body excerpt, never the full body
+    reset_url_trusted: bool = True    # anti-phishing: link host matches sender?
+    reset_url_note: str = ""          # explanation of the trust decision
 
     def to_audit_dict(self) -> dict:
         import re

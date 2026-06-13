@@ -134,6 +134,13 @@ def classify(
     reset_url = _extract_reset_url(body, domain)
     snippet = re.sub(r"\s+", " ", (body or "")[:240]).strip()
 
+    # Anti-phishing: assess the reset link before anyone acts on it.
+    from .linksafety import assess
+    link = assess(reset_url, domain)
+    if reset_url and not link.trusted:
+        rationale_bits.append("UNVERIFIED reset link")
+        severity = max(severity, Severity.HIGH)
+
     return BreachSignal(
         message_id=message_id,
         service_name=_guess_service_name(domain, subject),
@@ -146,6 +153,8 @@ def classify(
         account_hint=None,
         rationale="; ".join(rationale_bits),
         raw_snippet=snippet,
+        reset_url_trusted=link.trusted,
+        reset_url_note=link.reason,
     )
 
 

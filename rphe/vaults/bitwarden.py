@@ -226,20 +226,49 @@ class BitwardenVault(VaultWriter):
                 return it
         return None
 
-    def upsert(self, cred: GeneratedCredential) -> VaultItem:
+    # --- custom-field helpers (RPHE rotation status) -----------------------
+    @staticmethod
+    def _get_field(item: dict, name: str) -> Optional[str]:
+        for f in item.get("fields") or []:
+            if f.get("name") == name:
+                return f.get("value")
+        return None
+
+    @staticmethod
+    def _set_field(item: dict, name: str, value: str) -> None:
+        fields = item.setdefault("fields", []) or []
+        for f in fields:
+            if f.get("name") == name:
+                f["value"] = value
+                return
+        fields.append({"name": name, "value": value, "type": 0})
+        item["fields"] = fields
+
+    def upsert(self, cred: GeneratedCredential, status: str = "pending") -> VaultItem:
+        """Create/update a login. Lockout-safe: the previous password is pushed
+        into Bitwarden's passwordHistory and the item is tagged
+        rphe_status=<status> so an abandoned reset can be reverted/confirmed.
+        """
         folder_id = self._ensure_folder()
         existing = self._find_existing(cred)
         now = (cred.created_at or datetime.now(timezone.utc)).isoformat()
 
         if existing:
             existing.setdefault("login", {})
+            old_pw = existing["login"].get("password")
+            if old_pw and old_pw != cred.secret:
+                history = existing["login"].get("passwordHistory") or []
+                history.insert(0, {"lastUsedDate": now, "password": old_pw})
+                existing["login"]["passwordHistory"] = history[:20]
             existing["login"]["password"] = cred.secret
             existing["login"]["username"] = cred.username
             if cred.url:
                 existing["login"]["uris"] = [{"match": None, "uri": cred.url}]
             existing["notes"] = (cred.notes or existing.get("notes") or "")
-            encoded = self._encode(existing)
-            out = json.loads(self._run(["edit", "item", existing["id"], encoded]))
+            self._set_field(existing, "rphe_status", status)
+            self._set_field(existing, "rphe_rotated_at", now)
+            out = json.loads(self._run(["edit", "item", existing["id"],
+                                        self._encode(existing)]))
         else:
             template = json.loads(self._run(["get", "template", "item"]))
             template.update({
@@ -252,9 +281,12 @@ class BitwardenVault(VaultWriter):
                     "password": cred.secret,
                     "uris": [{"match": None, "uri": cred.url}] if cred.url else [],
                 },
+                "fields": [
+                    {"name": "rphe_status", "value": status, "type": 0},
+                    {"name": "rphe_rotated_at", "value": now, "type": 0},
+                ],
             })
-            encoded = self._encode(template)
-            out = json.loads(self._run(["create", "item", encoded]))
+            out = json.loads(self._run(["create", "item", self._encode(template)]))
 
         self._run(["sync"])  # converge other devices
         login = out.get("login") or {}
@@ -267,6 +299,64 @@ class BitwardenVault(VaultWriter):
             item_id=out.get("id"),
             password_fingerprint=hashlib.sha256(cred.secret.encode()).hexdigest()[:8],
         )
+
+    # --- pending / confirm / revert ----------------------------------------
+    def set_status(self, item_id: str, status: str) -> None:
+        item = json.loads(self._run(["get", "item", item_id]))
+        self._set_field(item, "rphe_status", status)
+        self._run(["edit", "item", item_id, self._encode(item)])
+        self._run(["sync"])
+
+    def revert(self, item_id: str) -> bool:
+        """Restore the previous password from passwordHistory. Returns False if
+        there's nothing to revert to. Never returns/logs the plaintext.
+        """
+        item = json.loads(self._run(["get", "item", item_id]))
+        history = (item.get("login") or {}).get("passwordHistory") or []
+        if not history:
+            return False
+        prev = history[0].get("password")
+        if not prev:
+            return False
+        item["login"]["password"] = prev
+        item["login"]["passwordHistory"] = history[1:]
+        self._set_field(item, "rphe_status", "reverted")
+        self._run(["edit", "item", item_id, self._encode(item)])
+        self._run(["sync"])
+        return True
+
+    def list_pending(self) -> list[VaultItem]:
+        out = []
+        for it in json.loads(self._run(["list", "items"]) or "[]"):
+            if it.get("type") != _LOGIN_TYPE:
+                continue
+            if self._get_field(it, "rphe_status") == "pending":
+                login = it.get("login") or {}
+                uris = login.get("uris") or []
+                out.append(VaultItem(
+                    name=it.get("name", ""), username=login.get("username") or "",
+                    url=(uris[0]["uri"] if uris else None), item_id=it.get("id")))
+        return out
+
+    def audit_logins(self) -> list[dict]:
+        """Return every login with the data the vault audit needs. The password
+        is included (plaintext, in memory only) so the engine can run the free
+        breach + strength checks; the engine must NOT persist or log it.
+        """
+        out = []
+        for it in json.loads(self._run(["list", "items"]) or "[]"):
+            if it.get("type") != _LOGIN_TYPE:
+                continue
+            login = it.get("login") or {}
+            uris = login.get("uris") or []
+            out.append({
+                "item_id": it.get("id"),
+                "name": it.get("name", ""),
+                "username": login.get("username") or "",
+                "url": (uris[0]["uri"] if uris else None),
+                "password": login.get("password") or "",
+            })
+        return out
 
     def list_items(self) -> list[VaultItem]:
         raw = json.loads(self._run(["list", "items"]) or "[]")

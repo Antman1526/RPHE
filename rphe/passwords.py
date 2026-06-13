@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import secrets
 import string
+from typing import Callable, Optional
 
 from .config import PasswordPolicy
 
@@ -96,7 +97,7 @@ def generate_passphrase(policy: PasswordPolicy) -> str:
 
 
 def generate_candidates(policy: PasswordPolicy, n: int = 5,
-                        reject: "Callable[[str], bool] | None" = None,
+                        reject: Optional[Callable[[str], bool]] = None,
                         max_tries: int = 50) -> list:
     """Generate `n` distinct candidate passwords for the user to choose from.
 
@@ -134,6 +135,29 @@ def generate_candidates(policy: PasswordPolicy, n: int = 5,
         seen.add(candidate)
         out.append(candidate)
     return out
+
+
+def password_strength_bits(password: str) -> float:
+    """Estimate the entropy (bits) of an ARBITRARY existing password.
+
+    Charset-size × length — a standard, deliberately conservative heuristic used
+    by the vault audit to flag weak passwords. Not a substitute for a real
+    strength meter, but good enough to catch obviously weak entries.
+    """
+    if not password:
+        return 0.0
+    pool = 0
+    if any(c.islower() for c in password):
+        pool += 26
+    if any(c.isupper() for c in password):
+        pool += 26
+    if any(c.isdigit() for c in password):
+        pool += 10
+    if any(not c.isalnum() for c in password):
+        pool += 33  # rough printable-symbol/space pool
+    if pool == 0:
+        return 0.0
+    return len(password) * math.log2(pool)
 
 
 def estimate_strength(policy: PasswordPolicy) -> float:

@@ -56,7 +56,9 @@ class RpheGui:
         self._btn(bar, "Unlock Bitwarden", self.on_unlock)
         self._btn(bar, "Scan Inboxes", self.on_scan)
         self._btn(bar, "Breach Report", self.on_breach_report)
+        self._btn(bar, "Vault Audit", self.on_vault_audit)
         self._btn(bar, "Rotate Selected…", self.on_rotate)
+        self._btn(bar, "Pending…", self.on_pending)
         self._btn(bar, "Sync Verify", self.on_sync)
         self._btn(bar, "NordPass Import…", self.on_nordpass)
 
@@ -132,10 +134,17 @@ class RpheGui:
             self.signals = signals
             self.tree.delete(*self.tree.get_children())
             for i, s in enumerate(signals):
+                if not s.reset_url:
+                    reset_cell = "no"
+                elif s.reset_url_trusted:
+                    reset_cell = "yes"
+                else:
+                    reset_cell = "yes ⚠ phishing?"
+                tags = (s.severity.name,) if s.reset_url_trusted else ("CRITICAL",)
                 self.tree.insert("", tk.END, iid=str(i),
                                  values=(s.severity.name, s.service_name,
-                                         s.kind.value, "yes" if s.reset_url else "no"),
-                                 tags=(s.severity.name,))
+                                         s.kind.value, reset_cell),
+                                 tags=tags)
             self.status.set(f"Scan complete — {len(signals)} account(s) flagged.")
         self._run_async(lambda: self.engine.scan(Severity.MEDIUM), done,
                         "Scanning inboxes…")
@@ -172,6 +181,22 @@ class RpheGui:
             return
         s = self.signals[int(sel[0])]
         RotateDialog(self.root, self.engine, s)
+
+    def on_vault_audit(self):
+        def done(report):
+            lines = [f"Scanned {report['scanned']} logins; "
+                     f"{len(report['findings'])} need attention.\n"]
+            for f in report["findings"]:
+                lines.append(f"⚠ {f['name']} / {f['username']}: {', '.join(f['issues'])}")
+            if not report["findings"]:
+                lines.append("✓ No weak, reused or breached passwords found.")
+            self._show_text("Vault Audit (weak / reused / breached)", "\n".join(lines))
+            self.status.set("Vault audit complete.")
+        self._run_async(self.engine.audit_vault, done,
+                        "Auditing every vault login (k-anonymity, local)…")
+
+    def on_pending(self):
+        PendingDialog(self.root, self.engine)
 
     def on_sync(self):
         def done(report):
@@ -252,7 +277,7 @@ class RotateDialog:
                 cands = self.engine.password_candidates(n=5, vet_pwned=True)
                 self.top.after(0, lambda: self._show_candidates(cands))
             except Exception as exc:
-                self.top.after(0, lambda: self.info.set(f"Error: {exc}"))
+                self.top.after(0, lambda exc=exc: self.info.set(f"Error: {exc}"))
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_candidates(self, cands):
@@ -288,7 +313,7 @@ class RotateDialog:
                     password=pw, url=url, kind=self.signal.kind.value)
                 self.top.after(0, lambda: self._done(res))
             except Exception as exc:
-                self.top.after(0, lambda: self.info.set(f"Error: {exc}"))
+                self.top.after(0, lambda exc=exc: self.info.set(f"Error: {exc}"))
         threading.Thread(target=worker, daemon=True).start()
 
     def _done(self, res):
@@ -299,6 +324,8 @@ class RotateDialog:
             f"Bitwarden: {'stored & verified ✓' if res.verified else 'stored (unverified)'}"
             + (f"  id={res.bitwarden_id}" if res.bitwarden_id else ""),
             f"NordPass CSV: {'staged ✓' if res.nordpass_staged else 'FAILED'}",
+            "Status: PENDING — use the 'Pending…' button to Confirm once the new "
+            "password works on the site, or Revert to roll back.",
             "",
             "Now complete the reset on the website:",
             plan.render(),
@@ -319,6 +346,66 @@ class RotateDialog:
         box.insert(tk.END, "\n".join(lines))
         box.configure(state=tk.DISABLED)
         box.pack(fill=tk.BOTH, expand=True)
+
+
+class PendingDialog:
+    """List unconfirmed rotations with per-item Confirm / Revert actions."""
+
+    def __init__(self, parent, engine):
+        self.engine = engine
+        self.top = tk.Toplevel(parent)
+        self.top.title("Pending rotations")
+        self.top.geometry("540x380")
+        self.top.transient(parent)
+        self.frame = ttk.Frame(self.top, padding=10)
+        self.frame.pack(fill=tk.BOTH, expand=True)
+        self.msg = tk.StringVar(value="Loading…")
+        ttk.Label(self.top, textvariable=self.msg).pack(side=tk.BOTTOM, anchor=tk.W,
+                                                        padx=10, pady=4)
+        self._reload()
+
+    def _reload(self):
+        for w in self.frame.winfo_children():
+            w.destroy()
+
+        def worker():
+            try:
+                items = self.engine.list_pending()
+                self.top.after(0, lambda: self._render(items))
+            except Exception as exc:
+                self.top.after(0, lambda exc=exc: self.msg.set(f"Error: {exc}"))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render(self, items):
+        if not items:
+            ttk.Label(self.frame, text="No pending rotations.").pack(anchor=tk.W)
+            self.msg.set("")
+            return
+        ttk.Label(self.frame, text="Confirm once the new password works on the "
+                  "site; Revert to roll back to the previous one.").pack(anchor=tk.W, pady=4)
+        for it in items:
+            row = ttk.Frame(self.frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{it.name} / {it.username}", width=34).pack(side=tk.LEFT)
+            ttk.Button(row, text="Confirm",
+                       command=lambda i=it: self._act("confirm", i)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(row, text="Revert",
+                       command=lambda i=it: self._act("revert", i)).pack(side=tk.LEFT)
+        self.msg.set(f"{len(items)} pending.")
+
+    def _act(self, kind, item):
+        def worker():
+            try:
+                if kind == "confirm":
+                    self.engine.confirm_rotation(item.item_id)
+                    res = "confirmed"
+                else:
+                    res = "reverted" if self.engine.revert_rotation(item.item_id) \
+                        else "no previous password to revert to"
+                self.top.after(0, lambda: (self.msg.set(f"{item.name}: {res}"), self._reload()))
+            except Exception as exc:
+                self.top.after(0, lambda exc=exc: self.msg.set(f"Error: {exc}"))
+        threading.Thread(target=worker, daemon=True).start()
 
 
 def launch():

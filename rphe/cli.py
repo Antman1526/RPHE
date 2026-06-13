@@ -13,6 +13,8 @@ Commands:
   rphe vault unlock               Unlock Bitwarden (prompts for master password).
   rphe scan                       Scan inboxes, classify, print at-risk accounts.
   rphe rotate                     Interactive: rotate flagged accounts end-to-end.
+  rphe pending/confirm/revert     Manage unconfirmed rotations (lockout-safe).
+  rphe vault audit                Audit ALL vault logins (weak/reused/breached).
   rphe sync verify                Compare Bitwarden vs the NordPass CSV mirror.
   rphe nordpass instructions      Show how to import the staged CSV.
   rphe nordpass clean             Securely delete the staged NordPass CSV.
@@ -252,6 +254,33 @@ def vault_unlock():
         raise typer.Exit(1)
 
 
+@vault_app.command("audit")
+def vault_audit(no_pwned: bool = typer.Option(False, help="Skip the HIBP breach check (offline).")):
+    """Audit EVERY Bitwarden login for breached, reused and weak passwords."""
+    from .engine import Engine
+    from .vaults import VaultError
+    cfg, store, audit = _ctx()
+    eng = Engine(cfg, store, audit)
+    try:
+        eng.unlock_bitwarden()
+    except VaultError as exc:
+        console.print(f"[red]{exc}[/]\nRun `rphe vault unlock` first.")
+        raise typer.Exit(1)
+    console.print("[dim]Auditing every login locally — only k-anonymity hash "
+                  "prefixes leave the machine, never passwords…[/]")
+    report = eng.audit_vault(check_pwned=not no_pwned)
+    table = Table(title=f"Vault audit — {report['scanned']} logins, "
+                        f"{len(report['findings'])} need attention")
+    table.add_column("Service"); table.add_column("Username"); table.add_column("Issues")
+    for f in report["findings"]:
+        table.add_row(f["name"], f["username"], ", ".join(f["issues"]))
+    console.print(table)
+    if report["findings"]:
+        console.print("[yellow]Rotate the flagged accounts with `rphe rotate`.[/]")
+    else:
+        console.print("[green]No weak, reused or breached passwords found.[/]")
+
+
 # --------------------------------------------------------------------------- #
 # Scan
 # --------------------------------------------------------------------------- #
@@ -277,10 +306,16 @@ def _render_signals(signals, title: str) -> None:
     for col in ("Severity", "Service", "Kind", "Received", "Reset link?", "Why"):
         table.add_column(col, overflow="fold")
     for s in signals:
+        if not s.reset_url:
+            reset_cell = "no"
+        elif s.reset_url_trusted:
+            reset_cell = "yes"
+        else:
+            reset_cell = "[red]yes ⚠ phishing?[/]"
         table.add_row(
             s.severity.name, s.service_name, s.kind.value,
             s.received_at.strftime("%Y-%m-%d"),
-            "yes" if s.reset_url else "no", s.rationale,
+            reset_cell, s.rationale,
         )
     console.print(table)
 
@@ -403,6 +438,8 @@ def rotate(
                       f" (id {res.bitwarden_id})")
         console.print(f"[green]NordPass: "
                       f"{'staged into CSV' if res.nordpass_staged else 'FAILED'}[/]")
+        console.print("[dim]Vault item marked PENDING — confirm it works with "
+                      f"`rphe confirm \"{s.service_name}\"`, or `rphe revert` to roll back.[/]")
 
         if pyperclip:
             try:
@@ -411,6 +448,9 @@ def rotate(
             except Exception:
                 pass
 
+        if s.reset_url and not s.reset_url_trusted:
+            console.print(f"[bold red]⚠ PHISHING RISK:[/] {s.reset_url_note}\n"
+                          "[red]Do NOT click the emailed link — open the site yourself.[/]")
         plan = orch.build_plan(s)
         console.print(plan.render())
         if automate and plan.automatable:
@@ -434,6 +474,70 @@ def res_cred(signal, username, password, url):
     """Build a GeneratedCredential for the (optional) assisted-reset autofill."""
     return GeneratedCredential(service_name=signal.service_name, username=username,
                                secret=password, url=url)
+
+
+def _engine_unlocked():
+    from .engine import Engine
+    from .vaults import VaultError
+    cfg, store, audit = _ctx()
+    eng = Engine(cfg, store, audit)
+    try:
+        eng.unlock_bitwarden()
+    except VaultError as exc:
+        console.print(f"[red]{exc}[/]\nRun `rphe vault unlock` first.")
+        raise typer.Exit(1)
+    return eng
+
+
+@app.command()
+def pending():
+    """List rotations written to the vault but not yet confirmed working."""
+    eng = _engine_unlocked()
+    items = eng.list_pending()
+    if not items:
+        console.print("[green]No pending rotations.[/]")
+        return
+    table = Table(title="Pending rotations (unconfirmed)")
+    table.add_column("Service"); table.add_column("Username")
+    for it in items:
+        table.add_row(it.name, it.username)
+    console.print(table)
+    console.print("After verifying a new password works: `rphe confirm \"<service>\"`. "
+                  "To roll back: `rphe revert \"<service>\"`.")
+
+
+def _one_pending(eng, service: str):
+    matches = [it for it in eng.list_pending() if service.lower() in it.name.lower()]
+    if not matches:
+        console.print(f"[yellow]No pending rotation matches '{service}'.[/]")
+        raise typer.Exit(1)
+    if len(matches) > 1:
+        console.print("[yellow]Multiple matches — be more specific:[/] "
+                      + ", ".join(m.name for m in matches))
+        raise typer.Exit(1)
+    return matches[0]
+
+
+@app.command()
+def confirm(service: str):
+    """Mark a pending rotation as confirmed (the new password works)."""
+    eng = _engine_unlocked()
+    item = _one_pending(eng, service)
+    eng.confirm_rotation(item.item_id)
+    console.print(f"[green]Confirmed: {item.name}.[/]")
+
+
+@app.command()
+def revert(service: str):
+    """Roll a pending rotation back to its previous password (e.g. reset abandoned)."""
+    eng = _engine_unlocked()
+    item = _one_pending(eng, service)
+    if eng.revert_rotation(item.item_id):
+        console.print(f"[green]Reverted {item.name} to its previous password.[/] "
+                      "Re-import the NordPass CSV to match, or run `rphe sync verify`.")
+    else:
+        console.print(f"[yellow]No previous password stored for {item.name}; "
+                      "nothing to revert.[/]")
 
 
 @app.command()

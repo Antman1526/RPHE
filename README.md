@@ -14,7 +14,19 @@ A **local-first**, cross-platform (macOS + Windows) tool that:
 6. **Verifies** the two vaults stay consistent and flags drift.
 7. **Advises** on enrolling **passkeys** where the service supports them.
 8. Ships as a **desktop GUI** plus a CLI — installable as a macOS **`.dmg`** and
-   a Windows **`.exe`**.
+   a Windows **`.exe`** (with the Bitwarden CLI bundled in).
+
+**Safety-first rotation & anti-phishing (v0.3):**
+- **Lockout-safe rotation** — a new password is written as **PENDING**, the
+  previous one is kept in Bitwarden's history, and you **Confirm** it once the
+  reset works or **Revert** with one click if you abandon it. No more locking
+  yourself out of an account mid-reset.
+- **Anti-phishing link checks** — every reset link is verified against the
+  sender's real domain (HTTPS, no punycode look-alikes); mismatches are flagged
+  as possible phishing and are **never** auto-opened or auto-filled.
+- **Vault-wide audit** — scan your *entire* Bitwarden vault for **breached**
+  (free HIBP k-anonymity), **reused**, and **weak** passwords, not just
+  email-flagged accounts.
 
 > ⚠️ **Read [§7 Limitations](#7-limitations--honest-trade-offs) first.** The
 > single most important fact: **NordPass has no public write API or official
@@ -179,6 +191,7 @@ already changed your recovery options.
 | Email scanners | `rphe/scanners/{imap,gmail,graph,eml}_scanner.py` | Read-only fetch → normalized message dicts (`eml` = offline files) |
 | Classifier | `rphe/classifier.py` | Rule-based; emits severity-ranked `BreachSignal`s, extracts reset links |
 | Breach checker | `rphe/breach.py` | HIBP: free k-anonymity password check + (keyed) email-breach lookup |
+| Link safety | `rphe/linksafety.py` | Anti-phishing: verifies reset-link host vs sender (HTTPS, no punycode) |
 | Password generator | `rphe/passwords.py` | CSPRNG, class guarantees, passphrase mode, **5 breach-vetted candidates** |
 | Engine | `rphe/engine.py` | Shared headless service the CLI **and** GUI both call (parity) |
 | Vault writer (Bitwarden) | `rphe/vaults/bitwarden.py` | `bw` CLI upsert + read-back verify + `bw sync` |
@@ -269,8 +282,12 @@ rphe auth gmail-check personal-gmail   # validate a stored Gmail token
 rphe secrets set hibp.api_key     # (optional) enable email-breach lookups
 rphe breach                       # check inbox addresses against Have I Been Pwned
 rphe scan --dry-run               # fetch + classify, write nothing
-rphe scan                         # list at-risk accounts
-rphe rotate --min-severity HIGH   # pick-from-5 rotation of HIGH+ findings
+rphe scan                         # list at-risk accounts (flags phishing links)
+rphe rotate --min-severity HIGH   # pick-from-5 rotation of HIGH+ findings (PENDING)
+rphe pending                      # rotations awaiting confirmation
+rphe confirm "GitHub"             # mark a rotation confirmed (new password works)
+rphe revert "GitHub"              # roll back to the previous password
+rphe vault audit                  # audit ALL vault logins: weak/reused/breached
 rphe rotate --automate            # assisted browser (still pauses for you)
 rphe sync verify                  # Bitwarden vs NordPass CSV drift
 rphe nordpass instructions        # how to import the staged CSV
@@ -325,6 +342,7 @@ RPHE/
 │   ├── audit.py                  # redacted append-only JSONL log
 │   ├── passwords.py              # CSPRNG generator + 5-candidate picker
 │   ├── breach.py                 # Have I Been Pwned integration
+│   ├── linksafety.py             # anti-phishing reset-link verification
 │   ├── passkeys.py               # passkey enrolment advisor
 │   ├── classifier.py             # rule-based breach-signal classifier
 │   ├── samples.py                # synthetic emails for `rphe demo`
@@ -353,8 +371,20 @@ RPHE/
     ├── test_breach.py            # HIBP k-anonymity + email lookup (offline)
     ├── test_candidates_passkeys.py  # 5-password picker + passkey advisor
     ├── test_config_roundtrip.py  # Settings save_config -> load_config
-    └── test_find_bw.py           # bundled-first Bitwarden CLI locator
+    ├── test_find_bw.py           # bundled-first Bitwarden CLI locator
+    ├── test_linksafety.py        # anti-phishing link checks + classifier escalation
+    ├── test_bitwarden_logic.py   # pending/confirm/revert against a fake bw
+    └── test_vault_audit.py       # weak/reused/breached vault audit
 ```
+
+### Continuous integration
+- **`.github/workflows/tests.yml`** runs `ruff` (critical-error gate) + the full
+  `pytest` suite on every push/PR to `main`.
+- **`.github/workflows/build-installers.yml`** runs the same test job first and
+  **only builds the `.dmg`/`.exe` if it passes** (`needs: test`).
+- The bundled `bw` is **pinned** (`fetch_bw.py` `DEFAULT_TAG`) and its download
+  is **SHA-256-verified** against the GitHub-published digest — supply-chain
+  integrity for the embedded binary.
 
 ---
 
