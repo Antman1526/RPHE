@@ -44,7 +44,9 @@ def _collect(pkg):
     except Exception as exc:  # not installed -> skip
         print(f"[rphe.spec] skipping optional lib {pkg}: {exc}")
 
-for _pkg in ("google", "googleapiclient", "google_auth_oauthlib",
+# customtkinter ships theme JSON + assets that must be collected, or the app
+# crashes at startup. The others enable the optional OAuth buttons.
+for _pkg in ("customtkinter", "google", "googleapiclient", "google_auth_oauthlib",
              "google_auth_httplib2", "msal"):
     _collect(_pkg)
 
@@ -83,7 +85,7 @@ if sys.platform == "darwin":
         coll, name="RPHE.app", icon=None,
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.4.0",
+            "CFBundleShortVersionString": "0.5.0",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.

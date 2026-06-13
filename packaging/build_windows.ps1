@@ -16,7 +16,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 python -m pip install --upgrade pip | Out-Null
-python -m pip install --upgrade pyinstaller typer rich PyYAML keyring | Out-Null
+python -m pip install --upgrade pyinstaller typer rich PyYAML keyring customtkinter | Out-Null
 # Optional OAuth libs so the bundled app's Connect Gmail/Outlook buttons work.
 python -m pip install --upgrade google-api-python-client google-auth-oauthlib msal | Out-Null
 

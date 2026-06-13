@@ -57,11 +57,21 @@ A **local-first**, cross-platform (macOS + Windows) tool that:
 
 ## Desktop app & installers
 
-RPHE ships as a minimal **desktop GUI** (Tkinter) over the same engine the CLI
-uses, so both behave identically. The app is **self-contained**: a built-in
-**Setup…** screen lets you add/edit email accounts, store IMAP app passwords and
-your HIBP key straight into the OS keychain, log in / unlock Bitwarden, and
-connect Gmail/Outlook via OAuth — no YAML editing or CLI required. (IMAP covers
+RPHE ships as a modern **desktop GUI** (customtkinter) over the same engine the
+CLI uses, so both behave identically. It has a sidebar and four task-focused
+pages that mirror the goal:
+
+- **Dashboard** — what the tool does, live connection status (Email / Bitwarden /
+  NordPass / Breach DB), and a one-click "Scan my accounts".
+- **Connect** — add inboxes (IMAP app-password or Gmail/Outlook OAuth), log in /
+  unlock Bitwarden, save your HIBP key — all straight into the OS keychain.
+- **Scan & Fix** — at-risk accounts as cards (severity colour, phishing/reset
+  badges) with a per-card **Rotate…** (pick from 5 vetted passwords).
+- **Vault Health** — audit every stored password (weak/reused/breached) and keep
+  NordPass in sync.
+
+Plus light/dark/system theme, a progress indicator, and **auto-lock**. No YAML
+editing or CLI required. (IMAP covers
 Gmail, Outlook, iCloud and Fastmail via app passwords with zero extra setup; the
 Gmail-API/Graph OAuth path is bundled too for least-privilege read-only tokens.)
 

@@ -38,7 +38,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller typer rich PyYAML keyring
+          python -m pip install pyinstaller typer rich PyYAML keyring customtkinter
           python -m pip install google-api-python-client google-auth-oauthlib msal
       - name: Verify Tk
         run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
@@ -75,7 +75,7 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pyinstaller typer rich PyYAML keyring
+          python -m pip install pyinstaller typer rich PyYAML keyring customtkinter
           python -m pip install google-api-python-client google-auth-oauthlib msal
       - name: Verify Tk
         run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
