@@ -1,5 +1,19 @@
 # RPHE — Recovery & Password-Hygiene Engine
 
+## Download
+
+Get the latest installers from the **[Releases page](https://github.com/Antman1526/RPHE_Claude/releases/latest)**:
+
+| Platform | File | First launch (unsigned app) |
+|---|---|---|
+| **macOS** | `RPHE.dmg` — open, drag **RPHE** to Applications | right-click **RPHE** → **Open** → **Open** |
+| **Windows** | `RPHE.exe` — run it | **More info** → **Run anyway** |
+
+The Bitwarden CLI is bundled in, so there's nothing else to install. After the
+one-time first-launch approval, it opens normally.
+
+---
+
 A **local-first**, cross-platform (macOS + Windows) tool that:
 
 1. **Scans** your email inbox(es) for breach / compromise signals.
