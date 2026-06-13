@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Callable, Optional
 
 from . import __version__
@@ -42,6 +43,13 @@ class RpheGui:
         self.root.minsize(760, 460)
         self._build()
         self._poll_queue()
+        # Auto-lock: lock Bitwarden on close and after idle.
+        self._last_activity = time.monotonic()
+        self._locked_by_idle = False
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        for ev in ("<Any-KeyPress>", "<Any-Button>"):
+            self.root.bind_all(ev, self._mark_active, add="+")
+        self.root.after(30_000, self._check_idle)
         # First-run nudge: if no accounts are configured, point to Setup.
         if not self.engine.cfg.accounts:
             self.root.after(400, lambda: self.status.set(
@@ -61,12 +69,15 @@ class RpheGui:
         self._btn(bar, "Pending…", self.on_pending)
         self._btn(bar, "Sync Verify", self.on_sync)
         self._btn(bar, "NordPass Import…", self.on_nordpass)
+        self._btn(bar, "Audit Log", self.on_audit_log)
+        self._btn(bar, "About", self.on_about)
 
-        cols = ("severity", "service", "kind", "reset")
+        cols = ("severity", "service", "kind", "reset", "breach")
         self.tree = ttk.Treeview(self.root, columns=cols, show="headings",
-                                 selectmode="browse")
-        for c, w, label in (("severity", 90, "Severity"), ("service", 200, "Service"),
-                            ("kind", 200, "Signal"), ("reset", 90, "Reset link")):
+                                 selectmode="extended")  # multi-select for bulk rotate
+        for c, w, label in (("severity", 80, "Severity"), ("service", 180, "Service"),
+                            ("kind", 170, "Signal"), ("reset", 110, "Reset link"),
+                            ("breach", 110, "Breach DB")):
             self.tree.heading(c, text=label)
             self.tree.column(c, width=w, anchor=tk.W)
         self.tree.tag_configure("CRITICAL", foreground="#b00020")
@@ -74,11 +85,17 @@ class RpheGui:
         self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=6)
         self.tree.bind("<Double-1>", lambda e: self.on_rotate())
 
-        self.status = tk.StringVar(value="Ready. Configure accounts in config.yaml, "
-                                          "then Scan. Nothing is sent anywhere but "
-                                          "your own providers and vaults.")
-        ttk.Label(self.root, textvariable=self.status, relief=tk.SUNKEN,
-                  anchor=tk.W, padding=(8, 4)).pack(side=tk.BOTTOM, fill=tk.X)
+        # Status bar with an indeterminate progress spinner for long operations.
+        self._busy = 0
+        bottom = ttk.Frame(self.root)
+        bottom.pack(side=tk.BOTTOM, fill=tk.X)
+        self.progress = ttk.Progressbar(bottom, mode="indeterminate", length=120)
+        self.progress.pack(side=tk.RIGHT, padx=8, pady=2)
+        self.status = tk.StringVar(value="Ready. Click 'Setup…' to configure "
+                                         "accounts. Nothing is sent anywhere but "
+                                         "your own providers and vaults.")
+        ttk.Label(bottom, textvariable=self.status, relief=tk.SUNKEN,
+                  anchor=tk.W, padding=(8, 4)).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def _btn(self, parent, text, cmd):
         ttk.Button(parent, text=text, command=cmd).pack(side=tk.LEFT, padx=4)
@@ -86,6 +103,9 @@ class RpheGui:
     # --- async plumbing -----------------------------------------------------
     def _run_async(self, fn: Callable, on_done: Callable, busy: str):
         self.status.set(busy)
+        self._busy += 1
+        if self._busy == 1:
+            self.progress.start(12)
 
         def worker():
             try:
@@ -99,6 +119,9 @@ class RpheGui:
         try:
             while True:
                 kind, on_done, payload = self._results_q.get_nowait()
+                self._busy = max(0, self._busy - 1)
+                if self._busy == 0:
+                    self.progress.stop()
                 if kind == "ok":
                     on_done(payload)
                 else:
@@ -143,7 +166,7 @@ class RpheGui:
                 tags = (s.severity.name,) if s.reset_url_trusted else ("CRITICAL",)
                 self.tree.insert("", tk.END, iid=str(i),
                                  values=(s.severity.name, s.service_name,
-                                         s.kind.value, reset_cell),
+                                         s.kind.value, reset_cell, "—"),
                                  tags=tags)
             self.status.set(f"Scan complete — {len(signals)} account(s) flagged.")
         self._run_async(lambda: self.engine.scan(Severity.MEDIUM), done,
@@ -163,24 +186,45 @@ class RpheGui:
             return
 
         def done(results):
-            lines = []
+            lines, domains = [], set()
             for r in results:
                 if r.breached:
                     lines.append(f"⚠  {r.name}: {', '.join(r.breach_titles[:8])}")
+                    domains.update(d.lower() for d in (r.breach_domains or []))
                 else:
                     lines.append(f"✓  {r.name}: no known breaches")
+            self._annotate_breach_rows(domains)
             self._show_text("Breach Report (Have I Been Pwned)", "\n".join(lines))
             self.status.set("Breach report complete.")
         self._run_async(lambda: self.engine.check_accounts_breached(emails), done,
                         "Checking Have I Been Pwned…")
 
+    def _annotate_breach_rows(self, breached_domains):
+        """Badge each flagged row whose sender domain is in a known breach."""
+        from .linksafety import registrable_domain
+        for i, s in enumerate(self.signals):
+            iid = str(i)
+            if not self.tree.exists(iid):
+                continue
+            rd = registrable_domain(s.sender_domain)
+            badge = "⚠ in breach" if rd and rd in breached_domains else "—"
+            vals = list(self.tree.item(iid, "values"))
+            if len(vals) >= 5:
+                vals[4] = badge
+                self.tree.item(iid, values=vals)
+
     def on_rotate(self):
         sel = self.tree.selection()
         if not sel:
-            messagebox.showinfo("Rotate", "Select a flagged account first (or Scan).")
+            messagebox.showinfo("Rotate", "Select one or more flagged accounts (or Scan).")
             return
-        s = self.signals[int(sel[0])]
-        RotateDialog(self.root, self.engine, s)
+        # Bulk rotate: open the dialog for each selected account in sequence.
+        queue_ = [self.signals[int(iid)] for iid in sel]
+
+        def open_next(_=None):
+            if queue_:
+                RotateDialog(self.root, self.engine, queue_.pop(0), on_close=open_next)
+        open_next()
 
     def on_vault_audit(self):
         def done(report):
@@ -214,6 +258,51 @@ class RpheGui:
         self._show_text("NordPass Import",
                         self.engine.nordpass().import_instructions())
 
+    def on_audit_log(self):
+        def done(events):
+            if not events:
+                self._show_text("Audit Log", "No audit events yet.")
+                return
+            lines = []
+            for e in events[-200:]:
+                detail = {k: v for k, v in e.items() if k not in ("ts", "action")}
+                lines.append(f"{e.get('ts','')}  {e.get('action','')}  "
+                             f"{str(detail)[:120]}")
+            self._show_text("Audit Log (redacted, last 200)", "\n".join(lines))
+            self.status.set("Audit log shown.")
+        self._run_async(self.engine.audit.read_all, done, "Reading audit log…")
+
+    def on_about(self):
+        def gather():
+            import keyring
+            from . import __version__
+            from .vaults.bitwarden import find_bw
+            bw = find_bw()
+            bwver = "not found"
+            if bw:
+                try:
+                    import subprocess
+                    bwver = subprocess.run([bw, "--version"], capture_output=True,
+                                           text=True, timeout=20).stdout.strip() or bw
+                except Exception:
+                    bwver = bw
+            try:
+                backend = keyring.get_keyring().__class__.__name__
+            except Exception:
+                backend = "unknown"
+            from .config import default_config_dir
+            return (f"RPHE — Recovery & Password-Hygiene Engine\n"
+                    f"Version: {__version__}\n"
+                    f"Bitwarden CLI: {bwver}\n"
+                    f"Keychain backend: {backend}\n"
+                    f"Config dir: {default_config_dir()}\n"
+                    f"Data dir: {self.engine.cfg.resolved_data_dir}\n"
+                    f"Auto-lock: {self.engine.cfg.auto_lock_minutes} min idle\n\n"
+                    "Secrets live only in your OS keychain; passwords are never "
+                    "logged or sent to any third party.")
+        self._run_async(gather, lambda txt: self._show_text("About RPHE", txt),
+                        "Gathering version info…")
+
     # --- helpers ------------------------------------------------------------
     def _show_text(self, title: str, body: str):
         top = tk.Toplevel(self.root)
@@ -224,6 +313,30 @@ class RpheGui:
         box.configure(state=tk.DISABLED)
         box.pack(fill=tk.BOTH, expand=True)
 
+    # --- auto-lock ----------------------------------------------------------
+    def _mark_active(self, _event=None):
+        self._last_activity = time.monotonic()
+        self._locked_by_idle = False
+
+    def _check_idle(self):
+        minutes = getattr(self.engine.cfg, "auto_lock_minutes", 15)
+        if minutes and not self._locked_by_idle:
+            idle = time.monotonic() - self._last_activity
+            if idle >= minutes * 60:
+                self._locked_by_idle = True
+                threading.Thread(target=self.engine.lock_bitwarden, daemon=True).start()
+                self.status.set(f"Vault auto-locked after {minutes} min idle. "
+                                "Unlock again to continue.")
+        self.root.after(30_000, self._check_idle)
+
+    def _on_close(self):
+        # Lock the vault on exit so a cached session doesn't outlive the app.
+        try:
+            self.engine.lock_bitwarden()
+        except Exception:
+            pass
+        self.root.destroy()
+
     def run(self):
         self.root.mainloop()
 
@@ -231,9 +344,11 @@ class RpheGui:
 class RotateDialog:
     """Modal-ish dialog: pick one of 5 vetted passwords, then store to both vaults."""
 
-    def __init__(self, parent, engine: Engine, signal):
+    def __init__(self, parent, engine: Engine, signal, on_close=None):
         self.engine = engine
         self.signal = signal
+        self.on_close_cb = on_close
+        self._closed = False
         self.candidates: list[str] = []
         self.choice = tk.StringVar()
 
@@ -241,6 +356,7 @@ class RotateDialog:
         self.top.title(f"Rotate — {signal.service_name}")
         self.top.geometry("620x460")
         self.top.transient(parent)
+        self.top.protocol("WM_DELETE_WINDOW", self._close)
 
         frm = ttk.Frame(self.top, padding=12)
         frm.pack(fill=tk.BOTH, expand=True)
@@ -263,7 +379,7 @@ class RotateDialog:
         btns = ttk.Frame(frm); btns.pack(side=tk.BOTTOM, fill=tk.X, pady=8)
         ttk.Button(btns, text="Apply & Store in both vaults",
                    command=self.on_apply).pack(side=tk.RIGHT)
-        ttk.Button(btns, text="Cancel", command=self.top.destroy).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(btns, text="Cancel", command=self._close).pack(side=tk.RIGHT, padx=6)
         self.info = tk.StringVar(value="")
         ttk.Label(frm, textvariable=self.info, foreground="#555").pack(
             side=tk.BOTTOM, anchor=tk.W)
@@ -337,8 +453,7 @@ class RotateDialog:
         ]
         if res.error:
             lines.insert(0, f"⚠ Error: {res.error}")
-        self.top.destroy()
-        # Reuse the parent's text popup.
+        # Show the result in an independent popup, then close (chaining bulk rotate).
         top = tk.Toplevel()
         top.title(f"Rotation complete — {res.service_name}")
         top.geometry("640x520")
@@ -346,6 +461,18 @@ class RotateDialog:
         box.insert(tk.END, "\n".join(lines))
         box.configure(state=tk.DISABLED)
         box.pack(fill=tk.BOTH, expand=True)
+        self._close()
+
+    def _close(self):
+        if self._closed:
+            return
+        self._closed = True
+        cb = self.on_close_cb
+        try:
+            self.top.destroy()
+        finally:
+            if cb:
+                cb()
 
 
 class PendingDialog:

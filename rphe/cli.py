@@ -14,7 +14,9 @@ Commands:
   rphe scan                       Scan inboxes, classify, print at-risk accounts.
   rphe rotate                     Interactive: rotate flagged accounts end-to-end.
   rphe pending/confirm/revert     Manage unconfirmed rotations (lockout-safe).
-  rphe vault audit                Audit ALL vault logins (weak/reused/breached).
+  rphe vault audit / vault lock   Audit ALL logins; lock the vault.
+  rphe scan-notify                Scan + desktop notification (for schedulers).
+  rphe schedule install/status    Recurring background scan (LaunchAgent / Task).
   rphe sync verify                Compare Bitwarden vs the NordPass CSV mirror.
   rphe nordpass instructions      Show how to import the staged CSV.
   rphe nordpass clean             Securely delete the staged NordPass CSV.
@@ -51,11 +53,13 @@ auth_app = typer.Typer(help="One-time email provider authentication.")
 vault_app = typer.Typer(help="Vault (Bitwarden) operations.")
 sync_app = typer.Typer(help="Cross-vault sync verification.")
 nordpass_app = typer.Typer(help="NordPass CSV bridge operations.")
+schedule_app = typer.Typer(help="Recurring background scan (LaunchAgent / Scheduled Task).")
 app.add_typer(secrets_app, name="secrets")
 app.add_typer(auth_app, name="auth")
 app.add_typer(vault_app, name="vault")
 app.add_typer(sync_app, name="sync")
 app.add_typer(nordpass_app, name="nordpass")
+app.add_typer(schedule_app, name="schedule")
 
 console = Console()
 
@@ -252,6 +256,15 @@ def vault_unlock():
         audit.event("bitwarden.unlock", result="error", detail=str(exc))
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(1)
+
+
+@vault_app.command("lock")
+def vault_lock():
+    """Lock the Bitwarden vault and clear the cached session key."""
+    from .engine import Engine
+    cfg, store, audit = _ctx()
+    Engine(cfg, store, audit).lock_bitwarden()
+    console.print("[green]Bitwarden locked; cached session cleared.[/]")
 
 
 @vault_app.command("audit")
@@ -538,6 +551,64 @@ def revert(service: str):
     else:
         console.print(f"[yellow]No previous password stored for {item.name}; "
                       "nothing to revert.[/]")
+
+
+@app.command("scan-notify")
+def scan_notify():
+    """Scan inboxes and pop a desktop notification if anything is flagged.
+
+    Non-interactive — designed to be run by `rphe schedule`. Uses keychain
+    tokens, so it needs no master password.
+    """
+    from .engine import Engine
+    from .notify import desktop_notify
+    cfg, store, audit = _ctx()
+    eng = Engine(cfg, store, audit)
+    threshold = Severity.from_name(cfg.notify_min_severity)
+    try:
+        signals = eng.scan(threshold)
+    except Exception as exc:
+        audit.event("scan_notify.error", detail=str(exc))
+        console.print(f"[red]scan failed: {exc}[/]")
+        raise typer.Exit(1)
+    if signals:
+        services = sorted({s.service_name for s in signals})
+        desktop_notify("RPHE — accounts may be at risk",
+                       f"{len(signals)} flagged: {', '.join(services[:5])}")
+        console.print(f"{len(signals)} flagged; desktop notification sent.")
+    else:
+        console.print("Nothing flagged.")
+
+
+@schedule_app.command("install")
+def schedule_install(every_hours: float = typer.Option(6.0, help="Scan interval in hours.")):
+    """Install a recurring background scan (macOS LaunchAgent / Windows task)."""
+    from . import schedule as sch
+    cfg, _, _ = _ctx()
+    try:
+        msg = sch.install(every_hours, data_dir=str(cfg.resolved_data_dir))
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+    console.print(f"[green]{msg}[/]")
+
+
+@schedule_app.command("uninstall")
+def schedule_uninstall():
+    """Remove the recurring background scan."""
+    from . import schedule as sch
+    try:
+        console.print(f"[green]{sch.uninstall()}[/]")
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
+
+@schedule_app.command("status")
+def schedule_status():
+    """Show whether the recurring background scan is installed."""
+    from . import schedule as sch
+    console.print(f"Scheduled scan: {sch.status()}")
 
 
 @app.command()

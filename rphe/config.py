@@ -67,6 +67,8 @@ class Config:
     nordpass_export_path: str = ""  # defaults into data_dir if blank
     automate_resets: bool = False   # default OFF: guided mode is safer
     data_dir: str = ""
+    auto_lock_minutes: int = 15     # GUI idle auto-lock (0 = never)
+    notify_min_severity: str = "HIGH"  # scheduled scan notifies at/above this
 
     @property
     def resolved_data_dir(self) -> Path:
@@ -101,6 +103,8 @@ def load_config(path: Path | None = None) -> Config:
         nordpass_export_path=raw.get("nordpass_export_path", ""),
         automate_resets=bool(raw.get("automate_resets", False)),
         data_dir=raw.get("data_dir", ""),
+        auto_lock_minutes=int(raw.get("auto_lock_minutes", 15)),
+        notify_min_severity=raw.get("notify_min_severity", "HIGH"),
     )
 
 
@@ -119,6 +123,8 @@ def save_config(cfg: Config, path: Path | None = None) -> Path:
         "bitwarden_folder": cfg.bitwarden_folder,
         "nordpass_export_path": cfg.nordpass_export_path,
         "automate_resets": cfg.automate_resets,
+        "auto_lock_minutes": cfg.auto_lock_minutes,
+        "notify_min_severity": cfg.notify_min_severity,
         "policy": asdict(cfg.policy),
         "accounts": [asdict(a) for a in cfg.accounts],
     }

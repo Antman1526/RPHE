@@ -53,5 +53,10 @@ if __name__ == "__main__":
     if os.environ.get("RPHE_SELFTEST") == "1" or "--rphe-selftest" in sys.argv:
         _selftest()
         sys.exit(0)
+    if "--scan-notify" in sys.argv:
+        # Headless mode used by the scheduled background scan.
+        from rphe.cli import scan_notify
+        scan_notify()
+        sys.exit(0)
     from rphe.gui import launch
     launch()

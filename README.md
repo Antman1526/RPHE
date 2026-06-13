@@ -28,6 +28,16 @@ A **local-first**, cross-platform (macOS + Windows) tool that:
   (free HIBP k-anonymity), **reused**, and **weak** passwords, not just
   email-flagged accounts.
 
+**Convenience & hygiene (v0.4):**
+- **Auto-lock** — the vault locks on app close and after a configurable idle
+  timeout (`auto_lock_minutes`, default 15), plus `rphe vault lock`.
+- **Scheduled scans + desktop notifications** — `rphe schedule install` sets up a
+  macOS LaunchAgent / Windows Scheduled Task that runs `rphe scan-notify` and
+  pops a desktop notification when something's flagged.
+- **GUI polish** — multi-select **bulk rotate**, a busy/progress indicator,
+  per-row **breach badges**, an **About** box (versions + bundled `bw`), and a
+  **View Audit Log** panel.
+
 > ⚠️ **Read [§7 Limitations](#7-limitations--honest-trade-offs) first.** The
 > single most important fact: **NordPass has no public write API or official
 > CLI.** True silent, real-time, two-way sync with NordPass is *not possible*
@@ -288,6 +298,10 @@ rphe pending                      # rotations awaiting confirmation
 rphe confirm "GitHub"             # mark a rotation confirmed (new password works)
 rphe revert "GitHub"              # roll back to the previous password
 rphe vault audit                  # audit ALL vault logins: weak/reused/breached
+rphe vault lock                   # lock the vault, clear the cached session
+rphe scan-notify                  # scan + desktop notification (used by scheduler)
+rphe schedule install --every-hours 6   # recurring background scan + notify
+rphe schedule status              # is the scheduled scan installed?
 rphe rotate --automate            # assisted browser (still pauses for you)
 rphe sync verify                  # Bitwarden vs NordPass CSV drift
 rphe nordpass instructions        # how to import the staged CSV
@@ -343,6 +357,8 @@ RPHE/
 │   ├── passwords.py              # CSPRNG generator + 5-candidate picker
 │   ├── breach.py                 # Have I Been Pwned integration
 │   ├── linksafety.py             # anti-phishing reset-link verification
+│   ├── notify.py                 # cross-platform desktop notifications
+│   ├── schedule.py               # LaunchAgent / Scheduled Task installer
 │   ├── passkeys.py               # passkey enrolment advisor
 │   ├── classifier.py             # rule-based breach-signal classifier
 │   ├── samples.py                # synthetic emails for `rphe demo`
@@ -373,8 +389,9 @@ RPHE/
     ├── test_config_roundtrip.py  # Settings save_config -> load_config
     ├── test_find_bw.py           # bundled-first Bitwarden CLI locator
     ├── test_linksafety.py        # anti-phishing link checks + classifier escalation
-    ├── test_bitwarden_logic.py   # pending/confirm/revert against a fake bw
-    └── test_vault_audit.py       # weak/reused/breached vault audit
+    ├── test_bitwarden_logic.py   # pending/confirm/revert/lock against a fake bw
+    ├── test_vault_audit.py       # weak/reused/breached vault audit
+    └── test_schedule_notify.py   # plist/schtasks generators + notifier
 ```
 
 ### Continuous integration

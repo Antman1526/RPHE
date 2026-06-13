@@ -184,6 +184,19 @@ class BitwardenVault(VaultWriter):
             raise VaultError("Bitwarden unlock failed: check master password / login status.")
         return proc.stdout.strip()
 
+    def lock(self) -> None:
+        """Lock the vault: run `bw lock` and drop the cached session key.
+
+        After this, any operation needs a fresh unlock(). Safe to call even if
+        already locked / not logged in.
+        """
+        try:
+            self._run(["lock"], with_session=False)
+        except VaultError:
+            pass  # not unlocked / not logged in — nothing to lock
+        self._session = None
+        self.store.delete(self.store.bitwarden_session_key())
+
     def _require_session(self) -> str:
         if not self._session:
             self._session = self.store.get(self.store.bitwarden_session_key())

@@ -21,7 +21,7 @@ class FakeBw:
         return json.loads(base64.b64decode(enc))
 
     def run(self, args, *, stdin=None, with_session=True):
-        if args[:1] == ["sync"]:
+        if args[:1] == ["sync"] or args[:1] == ["lock"]:
             return ""
         if args[:3] == ["get", "template", "item"]:
             return json.dumps({"type": 1, "name": "", "notes": "",
@@ -42,6 +42,18 @@ class FakeBw:
         return "[]"
 
 
+class FakeStore:
+    def __init__(self):
+        self.data = {"bitwarden.session": "sess"}
+
+    @staticmethod
+    def bitwarden_session_key():
+        return "bitwarden.session"
+
+    def delete(self, key):
+        self.data.pop(key, None)
+
+
 def _vault():
     v = BitwardenVault.__new__(BitwardenVault)
     v.bw = "/fake/bw"
@@ -49,9 +61,17 @@ def _vault():
     v.timeout = 10
     v._session = "sess"
     v._folder_id = "fld1"          # skip folder creation
+    v.store = FakeStore()
     fake = FakeBw()
     v._run = fake.run
     return v, fake
+
+
+def test_lock_clears_session():
+    v, fake = _vault()
+    v.lock()
+    assert v._session is None
+    assert "bitwarden.session" not in v.store.data
 
 
 def _cred(pw, svc="GitHub", user="me@x.com"):

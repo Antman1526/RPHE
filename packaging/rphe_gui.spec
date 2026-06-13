@@ -19,7 +19,7 @@ hiddenimports = [
     "rphe", "rphe.gui", "rphe.gui_setup", "rphe.engine", "rphe.cli",
     "rphe.breach", "rphe.linksafety", "rphe.passkeys", "rphe.passwords",
     "rphe.classifier", "rphe.config", "rphe.audit", "rphe.secrets",
-    "rphe.models", "rphe.samples",
+    "rphe.models", "rphe.samples", "rphe.notify", "rphe.schedule",
     "rphe.scanners", "rphe.scanners.base", "rphe.scanners.imap_scanner",
     "rphe.scanners.gmail_scanner", "rphe.scanners.graph_scanner",
     "rphe.scanners.eml_scanner", "rphe.reset", "rphe.reset.orchestrator",
@@ -83,7 +83,7 @@ if sys.platform == "darwin":
         coll, name="RPHE.app", icon=None,
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.3.0",
+            "CFBundleShortVersionString": "0.4.0",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.

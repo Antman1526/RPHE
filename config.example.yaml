@@ -15,6 +15,13 @@ nordpass_export_path: ""
 # `rotate --automate` may open an assisted browser (it still pauses for you).
 automate_resets: false
 
+# GUI auto-lock: lock Bitwarden after this many idle minutes (0 = never).
+# The vault is always locked when the app window closes.
+auto_lock_minutes: 15
+
+# `rphe scan-notify` (and the scheduled scan) notify at/above this severity.
+notify_min_severity: "HIGH"
+
 # Password policy used when rotating.
 policy:
   length: 24

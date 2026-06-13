@@ -50,6 +50,7 @@ class AccountBreach:
     title: str
     breach_date: str
     data_classes: list
+    domain: str = ""
 
 
 class BreachChecker:
@@ -119,7 +120,8 @@ class BreachChecker:
             out.append(AccountBreach(
                 name=b.get("Name", ""), title=b.get("Title", b.get("Name", "")),
                 breach_date=b.get("BreachDate", ""),
-                data_classes=b.get("DataClasses", []) or []))
+                data_classes=b.get("DataClasses", []) or [],
+                domain=b.get("Domain", "") or ""))
         return out
 
     # --- shared call w/ rate-limit handling --------------------------------

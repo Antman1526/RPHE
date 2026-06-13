@@ -39,6 +39,11 @@ class AccountBreachStatus:
     username: str
     breached: bool
     breach_titles: list
+    breach_domains: list = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.breach_domains is None:
+            self.breach_domains = []
 
 
 class Engine:
@@ -71,6 +76,14 @@ class Engine:
     def unlock_bitwarden(self, master_password: Optional[str] = None) -> None:
         self.bitwarden().unlock(master_password)
         self.audit.event("bitwarden.unlock", result="ok")
+
+    def lock_bitwarden(self) -> None:
+        """Lock the Bitwarden vault and clear the cached session (auto-lock/exit)."""
+        try:
+            self.bitwarden().lock()
+            self.audit.event("bitwarden.lock", result="ok")
+        except Exception as exc:
+            self.audit.event("bitwarden.lock", result="error", detail=str(exc))
 
     # --- email scan ---------------------------------------------------------
     def scan(self, min_severity: Severity = Severity.MEDIUM) -> list:
@@ -105,7 +118,8 @@ class Engine:
                 breaches = checker.account_breaches(email)
                 results.append(AccountBreachStatus(
                     name=email, username=email, breached=bool(breaches),
-                    breach_titles=[b.title for b in breaches]))
+                    breach_titles=[b.title for b in breaches],
+                    breach_domains=[b.domain for b in breaches if b.domain]))
             except Exception as exc:
                 self.audit.event("breach.lookup_error", account=email,
                                  detail=str(exc))
