@@ -11,5 +11,5 @@ Security stance: secrets live only in the OS keystore; plaintext passwords are
 never written to disk or logs. See SECURITY in README.md.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 __all__ = ["__version__"]

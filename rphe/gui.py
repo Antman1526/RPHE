@@ -29,11 +29,14 @@ try:
 except Exception:  # pragma: no cover - headless / no Tk
     ctk = None
 
-# ---- palette (light, dark) ---------------------------------------------------
+# ---- palette (light, dark) — calm & premium: neutral surfaces, one accent -----
 CARD = ("#ffffff", "#202024")
 BORDER = ("#e4e6eb", "#2d2d33")
-SIDEBAR = ("#f3f4f6", "#161619")
+SIDEBAR = ("#ffffff", "#161619")
+TEXT = ("#1a1a1f", "#f2f2f5")
 MUTED = ("#6b7280", "#9aa3af")
+ACCENT_BG = ("#2563eb", "#3b82f6")   # the single accent — primary CTA + active nav
+ACCENT_TEXT = ("#2563eb", "#60a5fa")
 GREEN = ("#16a34a", "#22c55e")
 AMBER = ("#d97706", "#f59e0b")
 RED = ("#dc2626", "#ef4444")
@@ -65,11 +68,12 @@ class RpheApp(ctk.CTk if ctk else object):
         ctk.set_default_color_theme("blue")
         self.engine = engine or Engine()
         self.signals = []
+        self._scanned = False
         self._results_q: "queue.Queue" = queue.Queue()
         self._busy = 0
         self.nav_buttons: dict = {}
         self.pages: dict = {}
-        self.status_chips: dict = {}
+        self.checklist: dict = {}
 
         self.title("RPHE — Recovery & Password-Hygiene Engine")
         self.geometry("1060x700")
@@ -133,14 +137,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
-        for key in ("dashboard", "connect", "scan", "health", "settings"):
-            page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
-            page.grid(row=0, column=0, sticky="nsew", padx=26, pady=(22, 8))
-            page.grid_columnconfigure(0, weight=1)
-            self.pages[key] = page
-            getattr(self, f"_page_{key}")(page)
-
-        # status bar
+        # Status bar first — pages reference self.status/self.progress at build time.
         sb = ctk.CTkFrame(self.content, height=34, corner_radius=0,
                           fg_color=("#f0f0f2", "#161619"))
         sb.grid(row=1, column=0, sticky="ew")
@@ -152,15 +149,24 @@ class RpheApp(ctk.CTk if ctk else object):
         self.progress.grid(row=0, column=1, padx=14, pady=6)
         self.progress.set(0)
 
+        for key in ("dashboard", "connect", "scan", "health", "settings"):
+            page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
+            page.grid(row=0, column=0, sticky="nsew", padx=40, pady=(32, 10))
+            page.grid_columnconfigure(0, weight=1)
+            self.pages[key] = page
+            getattr(self, f"_page_{key}")(page)
+
     def show_page(self, key: str):
         for k, page in self.pages.items():
             page.grid_remove()
         self.pages[key].grid()
         for k, b in self.nav_buttons.items():
             if k == key:
-                b.configure(fg_color=("#dbeafe", "#1d4ed8"), text_color=("#1d4ed8", "#ffffff"))
+                b.configure(fg_color=("#e8eefc", "#1d3a8a"), text_color=ACCENT_TEXT)
             else:
-                b.configure(fg_color="transparent", text_color=("#1f2937", "#e5e7eb"))
+                b.configure(fg_color="transparent", text_color=TEXT)
+        if key == "dashboard":
+            self._refresh_dashboard()
 
     # ---- reusable widgets --------------------------------------------------
     @staticmethod
@@ -182,58 +188,147 @@ class RpheApp(ctk.CTk if ctk else object):
 
     # ===================================================================== PAGES
     def _page_dashboard(self, page):
-        self._h1(page, "Keep your accounts safe").grid(row=0, column=0, sticky="w")
-        self._muted(page, "RPHE scans your inboxes for breach and suspicious-login "
-                    "alerts, finds the accounts at risk, helps you rotate their "
-                    "passwords, and stores the new ones in Bitwarden + NordPass.",
-                    wrap=720).grid(row=1, column=0, sticky="w", pady=(4, 18))
+        # Calm & premium: one eyebrow, a big purpose statement, a guided spine,
+        # a quiet status checklist, and exactly one primary action — all reactive
+        # to how far setup has progressed (see _refresh_dashboard).
+        self.dash_eyebrow = ctk.CTkLabel(page, text="", font=ctk.CTkFont(size=12, weight="bold"),
+                                         text_color=ACCENT_TEXT, anchor="w")
+        self.dash_eyebrow.grid(row=0, column=0, sticky="w")
+        self.dash_title = ctk.CTkLabel(page, text="", font=ctk.CTkFont(size=26, weight="bold"),
+                                       justify="left", anchor="w")
+        self.dash_title.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.dash_sub = ctk.CTkLabel(page, text="", font=ctk.CTkFont(size=14),
+                                     text_color=MUTED, justify="left", anchor="w", wraplength=520)
+        self.dash_sub.grid(row=2, column=0, sticky="w", pady=(10, 26))
 
-        # 3-step "how it works"
-        steps = ctk.CTkFrame(page, fg_color="transparent")
-        steps.grid(row=2, column=0, sticky="ew", pady=(0, 18))
+        self.spine = ctk.CTkFrame(page, fg_color="transparent")
+        self.spine.grid(row=3, column=0, sticky="ew", pady=(0, 26))
         for i in range(3):
-            steps.grid_columnconfigure(i, weight=1, uniform="step")
-        data = [("1", "🔌", "Connect", "Link your email, Bitwarden, NordPass and the "
-                 "breach database. Secrets stay in your OS keychain."),
-                ("2", "🛡️", "Scan", "Find accounts flagged by breach alerts, suspicious "
-                 "logins, or password-reset prompts."),
-                ("3", "🔑", "Fix", "Pick from 5 strong passwords, store them in both "
-                 "vaults, and follow the guided reset.")]
-        for i, (n, icon, title, body) in enumerate(data):
-            card = self._card(steps)
-            card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 12, 0))
-            ctk.CTkLabel(card, text=f"{icon}", font=ctk.CTkFont(size=30)).grid(
-                row=0, column=0, sticky="w", padx=16, pady=(14, 0))
-            ctk.CTkLabel(card, text=f"{n}. {title}", font=ctk.CTkFont(size=16, weight="bold"),
-                         anchor="w").grid(row=1, column=0, sticky="w", padx=16, pady=(2, 0))
-            self._muted(card, body, wrap=240).grid(row=2, column=0, sticky="w",
-                                                   padx=16, pady=(2, 14))
+            self.spine.grid_columnconfigure(i, weight=1, uniform="step")
 
-        # status row
-        statuscard = self._card(page)
-        statuscard.grid(row=3, column=0, sticky="ew", pady=(0, 18))
-        ctk.CTkLabel(statuscard, text="Connection status",
-                     font=ctk.CTkFont(size=15, weight="bold"), anchor="w").grid(
-            row=0, column=0, sticky="w", padx=16, pady=(14, 6))
-        chips = ctk.CTkFrame(statuscard, fg_color="transparent")
-        chips.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 14))
-        for i, (key, label) in enumerate([("email", "Email"), ("bitwarden", "Bitwarden"),
-                                          ("nordpass", "NordPass"), ("hibp", "Breach DB")]):
-            chip = ctk.CTkLabel(chips, text=f"●  {label}", fg_color=("#eef0f3", "#26262c"),
-                                corner_radius=14, text_color=GREY,
-                                font=ctk.CTkFont(size=13), padx=14, pady=6)
-            chip.grid(row=0, column=i, padx=4)
-            self.status_chips[key] = chip
-        ctk.CTkButton(statuscard, text="Open Connect →", width=140, height=32,
-                      fg_color="transparent", border_width=1,
-                      command=lambda: self.show_page("connect")).grid(
-            row=2, column=0, sticky="w", padx=16, pady=(0, 14))
+        panel = self._card(page)
+        panel.grid(row=4, column=0, sticky="w", pady=(0, 24))
+        ctk.CTkLabel(panel, text="What's connected", font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=MUTED, anchor="w").grid(row=0, column=0, sticky="w",
+                                                        padx=20, pady=(16, 10))
+        rows = ctk.CTkFrame(panel, fg_color="transparent")
+        rows.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 16))
+        rows.grid_columnconfigure(0, minsize=360)
+        for i, (key, label) in enumerate([("email", "Email inbox"),
+                                          ("bitwarden", "Bitwarden"), ("nordpass", "NordPass")]):
+            r = ctk.CTkFrame(rows, fg_color="transparent")
+            r.grid(row=i, column=0, sticky="ew", pady=5)
+            r.grid_columnconfigure(1, weight=1)
+            dot = ctk.CTkLabel(r, text="○", font=ctk.CTkFont(size=15), text_color=GREY, width=18)
+            dot.grid(row=0, column=0, sticky="w")
+            ctk.CTkLabel(r, text=label, font=ctk.CTkFont(size=13), anchor="w").grid(
+                row=0, column=1, sticky="w", padx=8)
+            st = ctk.CTkLabel(r, text="…", font=ctk.CTkFont(size=12), text_color=MUTED)
+            st.grid(row=0, column=2, sticky="e")
+            self.checklist[key] = (dot, st)
 
-        # primary CTA
-        cta = ctk.CTkButton(page, text="🔍   Scan my accounts", height=48,
-                            font=ctk.CTkFont(size=16, weight="bold"),
-                            command=lambda: (self.show_page("scan"), self.on_scan()))
-        cta.grid(row=4, column=0, sticky="w")
+        self.dash_cta = ctk.CTkButton(page, text="", height=46, width=260,
+                                      font=ctk.CTkFont(size=15, weight="bold"))
+        self.dash_cta.grid(row=5, column=0, sticky="w")
+        self.dash_hint = ctk.CTkLabel(page, text="Everything stays in your device's keychain.",
+                                      font=ctk.CTkFont(size=12), text_color=MUTED, anchor="w")
+        self.dash_hint.grid(row=6, column=0, sticky="w", pady=(12, 0))
+        self._refresh_dashboard()
+
+    def _build_spine(self, current: int):
+        for w in self.spine.winfo_children():
+            w.destroy()
+        steps = [("Connect", "Link email & your vaults"),
+                 ("Scan", "Find compromised accounts"),
+                 ("Fix", "Rotate & store in both")]
+        for i, (title, sub) in enumerate(steps):
+            n = i + 1
+            col = ctk.CTkFrame(self.spine, fg_color="transparent")
+            col.grid(row=0, column=i, sticky="w")
+            head = ctk.CTkFrame(col, fg_color="transparent")
+            head.grid(row=0, column=0, sticky="w")
+            done = n < current
+            active = n == current
+            circle = ctk.CTkLabel(head, text=("✓" if done else str(n)), width=30, height=30,
+                                  corner_radius=15, font=ctk.CTkFont(size=13, weight="bold"),
+                                  fg_color=(GREEN if done else (ACCENT_BG if active else "transparent")),
+                                  text_color=("#ffffff" if (done or active) else GREY))
+            if not (done or active):
+                circle.configure(fg_color=("#eceef2", "#26262c"))
+            circle.grid(row=0, column=0)
+            ctk.CTkLabel(head, text=title, font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=(TEXT if active or done else MUTED)).grid(row=0, column=1, padx=10)
+            ctk.CTkLabel(col, text=sub, font=ctk.CTkFont(size=12), text_color=MUTED,
+                         anchor="w").grid(row=1, column=0, sticky="w", padx=(40, 0), pady=(6, 0))
+
+    def _refresh_dashboard(self):
+        if not hasattr(self, "dash_cta"):
+            return
+        accounts = bool(self.engine.cfg.accounts)
+        flagged = len(self.signals)
+        if not accounts:
+            step = 1
+            eyebrow = "GETTING STARTED"
+            title = "Find the accounts that are at risk —\nand fix them in a few clicks."
+            sub = ("RPHE reads your inbox for breach and suspicious-login alerts, helps you "
+                   "set a strong new password, and saves it to Bitwarden and NordPass. Three steps.")
+            cta, cmd = "Connect your inbox to begin", lambda: self.show_page("connect")
+        elif not self._scanned:
+            step = 2
+            eyebrow = "READY TO SCAN"
+            title = "You're set up.\nScan your inbox whenever you're ready."
+            sub = "RPHE will look through recent mail for accounts that may be compromised."
+            cta, cmd = "Scan my accounts", lambda: (self.show_page("scan"), self.on_scan())
+        elif flagged:
+            step = 3
+            eyebrow = "ACTION NEEDED"
+            title = f"{flagged} account{'s' if flagged != 1 else ''} need attention."
+            sub = "Review each one and rotate to a strong new password stored in both vaults."
+            cta, cmd = (f"Review {flagged} at-risk account{'s' if flagged != 1 else ''}",
+                        lambda: self.show_page("scan"))
+        else:
+            step = 3
+            eyebrow = "ALL CLEAR"
+            title = "No at-risk accounts found."
+            sub = "You're in good shape. Scan again any time, or audit your whole vault."
+            cta, cmd = "Scan again", lambda: (self.show_page("scan"), self.on_scan())
+        self.dash_eyebrow.configure(text=eyebrow)
+        self.dash_title.configure(text=title)
+        self.dash_sub.configure(text=sub)
+        self.dash_cta.configure(text=cta, command=cmd)
+        self._build_spine(step)
+        self._refresh_checklist()
+
+    def _set_check(self, key, state, text):
+        pair = self.checklist.get(key)
+        if not pair:
+            return
+        dot, st = pair
+        glyph, color = {"ok": ("●", GREEN), "todo": ("○", GREY),
+                        "warn": ("●", AMBER)}.get(state, ("○", GREY))
+        dot.configure(text=glyph, text_color=color)
+        st.configure(text=text, text_color=(color if state != "todo" else MUTED))
+
+    def _refresh_checklist(self):
+        self._set_check("email", "ok" if self.engine.cfg.accounts else "todo",
+                        "Connected" if self.engine.cfg.accounts else "Not connected")
+        self._set_check("nordpass", "ok", "Ready (CSV)")
+
+        def done(stt):
+            s = stt.get("status", "unknown")
+            mapping = {"unlocked": ("ok", "Unlocked"), "locked": ("warn", "Locked — unlock to use"),
+                       "unauthenticated": ("todo", "Not logged in"),
+                       "missing-cli": ("todo", "CLI not found")}
+            state, txt = mapping.get(s, ("todo", "Unknown"))
+            self._set_check("bitwarden", state, txt)
+            if hasattr(self, "bw_status"):
+                email = stt.get("userEmail") or ""
+                self.bw_status.configure(text={
+                    "missing-cli": "Bitwarden CLI not found.",
+                    "unauthenticated": "Not logged in.",
+                    "locked": f"Locked{(' · ' + email) if email else ''}.",
+                    "unlocked": f"Unlocked ✓{(' · ' + email) if email else ''}."}.get(s, s))
+        self._async(self.engine.bitwarden_status, done, "")
 
     # ---- Connect -----------------------------------------------------------
     def _page_connect(self, page):
@@ -535,41 +630,8 @@ class RpheApp(ctk.CTk if ctk else object):
         self.after(120, self._poll_queue)
 
     def refresh_status(self):
-        # email chip from config
-        has_accts = bool(self.engine.cfg.accounts)
-        self._set_chip("email", has_accts, "Email")
-        self._set_chip("nordpass", True, "NordPass", neutral=True)
-        self._set_chip("hibp",
-                       self.engine.store.get(self.engine.store.hibp_api_key()) is not None,
-                       "Breach DB")
-
-        def done(st):
-            s = st.get("status", "unknown")
-            self._set_chip("bitwarden", s == "unlocked", "Bitwarden",
-                           amber=(s in ("locked", "unauthenticated")))
-            if hasattr(self, "bw_status"):
-                email = st.get("userEmail") or ""
-                txt = {"missing-cli": "Bitwarden CLI not found.",
-                       "unauthenticated": "Not logged in.",
-                       "locked": f"Locked{(' · ' + email) if email else ''}.",
-                       "unlocked": f"Unlocked ✓{(' · ' + email) if email else ''}."
-                       }.get(s, s)
-                self.bw_status.configure(text=txt)
-        self._async(self.engine.bitwarden_status, done, "")
-
-    def _set_chip(self, key, ok, label, amber=False, neutral=False):
-        chip = self.status_chips.get(key)
-        if not chip:
-            return
-        if neutral:
-            color, txt = ("#3b82f6", "#60a5fa"), f"●  {label}: ready"
-        elif ok:
-            color, txt = GREEN, f"●  {label}: connected"
-        elif amber:
-            color, txt = AMBER, f"●  {label}: action needed"
-        else:
-            color, txt = GREY, f"●  {label}: not set"
-        chip.configure(text=txt, text_color=color)
+        # The dashboard is the single source of truth for connection state.
+        self._refresh_dashboard()
 
     # ---- connect actions ---
     def on_add_inbox(self):
@@ -665,6 +727,7 @@ class RpheApp(ctk.CTk if ctk else object):
 
         def done(signals):
             self.signals = signals
+            self._scanned = True
             self._render_findings(signals)
             self.status.configure(text=f"Scan complete — {len(signals)} account(s) flagged.")
         self._async(lambda: self.engine.scan(Severity.MEDIUM), done, "Scanning inboxes…")

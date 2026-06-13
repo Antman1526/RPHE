@@ -71,7 +71,15 @@ pages that mirror the goal:
   NordPass in sync.
 
 Plus light/dark/system theme, a progress indicator, and **auto-lock**. No YAML
-editing or CLI required. (IMAP covers
+editing or CLI required.
+
+The visual language is **calm & premium** (1Password/Things lineage): neutral
+surfaces, hairline borders, generous whitespace, and a **single accent** used
+only on the active nav item and the one primary action. The **Home** screen is
+**state-reactive** — a guided Connect → Scan → Fix spine lights the current step,
+a quiet checklist shows what's connected, and the primary button graduates from
+"Connect your inbox" to "Scan my accounts" to "Review N at-risk accounts" as you
+progress, so the next thing to do is always obvious. (IMAP covers
 Gmail, Outlook, iCloud and Fastmail via app passwords with zero extra setup; the
 Gmail-API/Graph OAuth path is bundled too for least-privilege read-only tokens.)
 
