@@ -181,6 +181,35 @@ def test_unlock_rejects_session_from_a_different_account():
     assert v.store.data["bitwarden.account_email"] == "bob@evil.example"
 
 
+def test_unlock_fails_closed_when_bound_account_unreadable():
+    # An account is bound, but `bw status` returns no email (current=None). We
+    # must NOT reuse the cached session on faith — discard it and re-unlock.
+    v, fake = _vault()
+    v.store.data["bitwarden.account_email"] = "alice@example.com"
+    v.store.data["bitwarden.master_password"] = "pw"
+    fake.status_email = None                          # account can't be confirmed
+    reunlocked = {"called": False}
+
+    def _fake_unlock(pw):
+        reunlocked["called"] = True
+        return "freshsess"
+
+    v._unlock_stdin = _fake_unlock
+    v._session = None
+    v.unlock()
+    assert reunlocked["called"] is True               # did NOT trust the session
+    assert v._session == "freshsess"
+
+
+def test_verify_present_requires_matching_password_fingerprint():
+    # Same identity but a different password must NOT verify — "verified" has to
+    # mean the new secret is actually stored, not just that the login exists.
+    v, fake = _vault()
+    v.upsert(_cred("Stored-Pass-111"))
+    assert v.verify_present(_cred("Stored-Pass-111")) is True
+    assert v.verify_present(_cred("Different-Pass-999")) is False
+
+
 def _argv_contains_secret(argv_log, secret):
     """True if the plaintext password (or its base64 encoding) appears in argv."""
     for argv in argv_log:

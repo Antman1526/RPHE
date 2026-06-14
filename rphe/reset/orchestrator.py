@@ -39,6 +39,26 @@ def _same_registrable_site(expected_url: str, landed_url: str) -> bool:
     return bool(expected) and expected == landed
 
 
+def _autofill_target_ok(reset_url: str, landed_url: str) -> tuple[bool, str]:
+    """Decide whether it is safe to type the new password into `landed_url`.
+
+    Safe only when the page we actually landed on is BOTH on the same
+    registrable domain we vetted AND served over HTTPS. Refuses on a
+    cross-domain redirect (phishing) or an https->http downgrade (SSL-strip /
+    misconfigured redirect), so the new plaintext password is never handed to a
+    page we don't fully trust. Returns (ok, human_reason); reason is "" when ok.
+    """
+    expected = registrable_domain(urlparse(reset_url or "").hostname or "")
+    landed = registrable_domain(urlparse(landed_url or "").hostname or "")
+    scheme = (urlparse(landed_url or "").scheme or "").lower()
+    if not _same_registrable_site(reset_url, landed_url):
+        return False, f"redirected from '{expected or '?'}' to '{landed or '?'}'"
+    if scheme != "https":
+        return False, (f"downgraded to an insecure {scheme or '?'}:// page on "
+                       f"'{landed or '?'}'")
+    return True, ""
+
+
 @dataclass
 class ResetStep:
     order: int
@@ -151,19 +171,19 @@ class ResetOrchestrator:
             page.set_default_timeout(self.nav_timeout_ms)
             page.goto(plan.reset_url, wait_until="domcontentloaded")
 
-            # Re-verify the landing host BEFORE typing the new password. The link
-            # we vetted can 302 / open-redirect to somewhere else; if the page we
-            # actually ended up on isn't the same registrable domain we trusted,
-            # refuse to autofill so the new password is never handed to a
-            # redirected phishing page. The human can still type it manually.
-            expected = registrable_domain(urlparse(plan.reset_url).hostname or "")
-            landed = registrable_domain(urlparse(page.url).hostname or "")
-            if not _same_registrable_site(plan.reset_url, page.url):
-                print("\n>>> ⚠ STOPPED: the reset page redirected from "
-                      f"'{expected or '?'}' to '{landed or '?'}'.")
+            # Re-verify the landing page BEFORE typing the new password. The link
+            # we vetted can 302 / open-redirect somewhere else, OR downgrade from
+            # the https:// we trusted to plaintext http://. We must confirm BOTH
+            # that we're still on the same registrable domain AND that the landed
+            # page is HTTPS — otherwise the new password could be typed into a
+            # phishing redirect or an SSL-stripped plaintext page. Refuse to
+            # autofill in either case; the human can still type it manually.
+            ok, reason = _autofill_target_ok(plan.reset_url, page.url)
+            if not ok:
+                print(f"\n>>> ⚠ STOPPED: the reset page {reason}.")
                 print(">>> RPHE did NOT type your new password (possible phishing "
-                      "redirect). Check the address bar; if it's genuinely the "
-                      "right site, paste the password yourself.")
+                      "redirect or SSL-strip). Check the address bar; if it's "
+                      "genuinely the right site, paste the password yourself.")
                 try:
                     page.wait_for_event("close", timeout=0)
                 except Exception:
@@ -173,8 +193,7 @@ class ResetOrchestrator:
                         closer()
                     except Exception:
                         pass
-                return (f"halted: reset link redirected off '{expected or '?'}' "
-                        f"to '{landed or '?'}'; nothing was filled")
+                return f"halted: reset page {reason}; nothing was filled"
 
             # Best-effort: fill inputs that look like "new password" + "confirm".
             selectors = [

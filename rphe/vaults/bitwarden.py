@@ -216,16 +216,21 @@ class BitwardenVault(VaultWriter):
             else:
                 expected = self.store.get(self.store.bitwarden_account_key())
                 current = self._account_email()
-                if expected and current and current != expected:
-                    # Logged-in account changed out from under us — discard the
-                    # session and re-unlock so we bind to the current account.
-                    self._session = None
-                    self.store.delete(self.store.bitwarden_session_key())
-                else:
-                    if current and not expected:
-                        # Trust-on-first-use: bind the cached session now.
+                if not expected:
+                    # No prior binding: trust-on-first-use. Bind now if we can
+                    # read the account; either way it's safe to reuse since there
+                    # is no recorded account this session could be violating.
+                    if current:
                         self.store.set(self.store.bitwarden_account_key(), current)
                     return
+                if current and current == expected:
+                    return  # account confirmed — safe to reuse the session
+                # expected is set but the live account differs OR couldn't be
+                # read. Fail CLOSED: never reuse a session we can't confirm still
+                # belongs to the bound account (could rotate into the wrong
+                # vault). Discard it and fall through to a fresh unlock.
+                self._session = None
+                self.store.delete(self.store.bitwarden_session_key())
 
         if master_password is None:
             master_password = self.store.get(self.store.bitwarden_master_key())

@@ -85,7 +85,7 @@ if sys.platform == "darwin":
         coll, name="RPHE.app", icon=str(ROOT / "packaging" / "RPHE.icns"),
         bundle_identifier="com.rphe.passwordhygiene",
         info_plist={
-            "CFBundleShortVersionString": "0.8.2",
+            "CFBundleShortVersionString": "0.8.3",
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.utilities",
             # No special entitlements needed; Keychain access is per-user.

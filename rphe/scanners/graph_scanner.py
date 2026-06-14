@@ -82,10 +82,16 @@ class GraphScanner(Scanner):
         # and classify locally — but cap total messages so a huge/"All time"
         # mailbox can't trigger thousands of paged requests.
         max_messages = 3000
+        # Also bound the page count directly: `seen` only advances when a page
+        # actually contains items, so an (unusual but legal) empty page carrying
+        # a non-null @odata.nextLink could otherwise loop indefinitely.
+        max_pages = max_messages // 100 + 5
         seen = 0
+        pages = 0
         with requests.Session() as s:
             s.headers.update(headers)
-            while url and seen < max_messages:
+            while url and seen < max_messages and pages < max_pages:
+                pages += 1
                 r = s.get(url, params=params, timeout=30)
                 r.raise_for_status()
                 data = r.json()
