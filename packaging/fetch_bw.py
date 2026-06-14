@@ -49,6 +49,8 @@ def _ssl_context() -> ssl.SSLContext:
 
 
 def _request(url: str, *, api: bool = False) -> bytes:
+    if not url.lower().startswith("https://"):
+        raise ValueError(f"refusing to fetch non-HTTPS URL: {url}")
     headers = {"User-Agent": "rphe-build"}
     if api:
         headers["Accept"] = "application/vnd.github+json"
@@ -56,7 +58,8 @@ def _request(url: str, *, api: bool = False) -> bytes:
         if token:
             headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as resp:
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as resp:  # https-enforced
         return resp.read()
 
 

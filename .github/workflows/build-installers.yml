@@ -96,3 +96,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/RPHE.exe
+
+  # Publish SHA-256 checksums so anyone can verify a download wasn't tampered
+  # with: `shasum -a 256 -c SHA256SUMS.txt` (macOS) / `CertUtil -hashfile` (Win).
+  checksums:
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd artifacts
+          sha256sum RPHE-macos-dmg/RPHE.dmg RPHE-windows-exe/RPHE.exe \
+            | sed 's#RPHE-macos-dmg/##; s#RPHE-windows-exe/##' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/SHA256SUMS.txt

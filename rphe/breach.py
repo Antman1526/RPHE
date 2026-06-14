@@ -36,9 +36,14 @@ FetchFn = Callable[[str, dict], "tuple[int, str]"]
 
 
 def _urllib_fetch(url: str, headers: dict, timeout: int = 20) -> "tuple[int, str]":
+    # Defence in depth: only ever fetch over HTTPS (blocks file:// and other
+    # schemes), since URLs are built from constants + URL-encoded user data.
+    if not url.lower().startswith("https://"):
+        raise ValueError("RPHE only contacts HTTPS endpoints")
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # https-enforced above
             return resp.status, resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace") if exc.fp else ""
@@ -72,9 +77,10 @@ class BreachChecker:
         Only the first 5 chars of the SHA-1 hash are sent over the network.
         """
         # SHA-1 is mandated by the HIBP range API; it is NOT used here as a
-        # security primitive, so this is not a weak-hash vulnerability.
-        digest = hashlib.sha1(password.encode("utf-8"),
-                              usedforsecurity=False).hexdigest().upper()
+        # security primitive (usedforsecurity=False), so this is not a weak-hash
+        # vulnerability — switching to SHA-256 would break the API.
+        digest = hashlib.sha1(  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+            password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
         prefix, suffix = digest[:5], digest[5:]
         # "Add-Padding" hides the real result size from a network observer.
         status, body = self._call(

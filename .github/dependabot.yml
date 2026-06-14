@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Python dependencies — security + version updates.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  # Keep the GitHub Actions used in CI patched.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

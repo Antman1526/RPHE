@@ -1,0 +1,38 @@
+name: Security
+
+# Static analysis (semgrep) + dependency CVE audit (pip-audit) on every push/PR.
+# Protects against insecure code patterns and known-vulnerable/malicious deps.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1"     # weekly, catches newly-disclosed CVEs in pinned deps
+  workflow_dispatch: {}
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip semgrep
+      - name: Semgrep SAST (fail on findings)
+        run: semgrep --config p/python --config p/security-audit --error --metrics off rphe packaging
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install full runtime surface + pip-audit
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          python -m pip install -e ".[all]"
+      - name: Audit dependencies for known CVEs
+        run: pip-audit --strict --progress-spinner off

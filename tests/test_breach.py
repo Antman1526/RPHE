@@ -62,6 +62,13 @@ def test_account_breaches_404_means_clean():
     assert BreachChecker(api_key="KEY", fetch=fake_fetch).account_breaches("x@y.com") == []
 
 
+def test_urllib_fetch_refuses_non_https():
+    from rphe.breach import _urllib_fetch
+    for bad in ("http://example.com", "file:///etc/passwd", "ftp://x/y"):
+        with pytest.raises(ValueError):
+            _urllib_fetch(bad, {})
+
+
 def test_bad_key_raises():
     def fake_fetch(url, headers):
         return 401, ""
