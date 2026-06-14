@@ -35,4 +35,6 @@ jobs:
           python -m pip install --upgrade pip pip-audit
           python -m pip install -e ".[all]"
       - name: Audit dependencies for known CVEs
-        run: pip-audit --strict --progress-spinner off
+        # --skip-editable: don't try to audit our own local `rphe` package
+        # (it isn't on PyPI); --strict still fails on any real CVE.
+        run: pip-audit --strict --skip-editable --progress-spinner off
