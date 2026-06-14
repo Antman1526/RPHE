@@ -21,23 +21,27 @@ class ProviderInfo:
     app_password_url: str = ""   # where the user creates an app password
     oauth: str = ""          # 'gmail' | 'graph' | '' (read-only advanced path)
     note: str = ""           # special guidance (e.g. Proton Bridge)
+    spam_folder: str = "Junk"    # IMAP spam/junk folder (alerts often land here)
 
 
 _GMAIL = ProviderInfo("gmail", "Gmail", "imap.gmail.com", 993,
-                      "https://myaccount.google.com/apppasswords", "gmail")
+                      "https://myaccount.google.com/apppasswords", "gmail",
+                      spam_folder="[Gmail]/Spam")
 _OUTLOOK = ProviderInfo("outlook", "Outlook", "outlook.office365.com", 993,
-                        "https://account.live.com/proofs/AppPassword", "graph")
+                        "https://account.live.com/proofs/AppPassword", "graph",
+                        spam_folder="Junk Email")
 _ICLOUD = ProviderInfo("icloud", "iCloud Mail", "imap.mail.me.com", 993,
-                       "https://support.apple.com/102654")
+                       "https://support.apple.com/102654", spam_folder="Junk")
 _YAHOO = ProviderInfo("yahoo", "Yahoo Mail", "imap.mail.yahoo.com", 993,
-                      "https://login.yahoo.com/account/security")
+                      "https://login.yahoo.com/account/security", spam_folder="Bulk Mail")
 _FASTMAIL = ProviderInfo("fastmail", "Fastmail", "imap.fastmail.com", 993,
-                         "https://www.fastmail.help/hc/en-us/articles/360058752854")
+                         "https://www.fastmail.help/hc/en-us/articles/360058752854",
+                         spam_folder="Spam")
 _AOL = ProviderInfo("aol", "AOL Mail", "imap.aol.com", 993,
-                    "https://login.aol.com/account/security")
+                    "https://login.aol.com/account/security", spam_folder="Spam")
 _PROTON = ProviderInfo("proton", "Proton Mail", "127.0.0.1", 1143, "", "",
                        "Proton needs the Proton Mail Bridge app running locally; "
-                       "use the host and port Bridge shows you.")
+                       "use the host and port Bridge shows you.", spam_folder="Spam")
 
 _DOMAINS = {
     "gmail.com": _GMAIL, "googlemail.com": _GMAIL,

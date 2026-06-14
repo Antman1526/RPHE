@@ -434,9 +434,14 @@ class RpheApp(ctk.CTk if ctk else object):
         form.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         form.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(form, text="Add an inbox", font=ctk.CTkFont(size=13, weight="bold")
-                     ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 4))
+                     ).grid(row=0, column=0, sticky="w", padx=14, pady=(12, 2))
+        ctk.CTkLabel(form, text="Easiest: enter your email + an app password. RPHE scans "
+                     "your mailbox over IMAP — no Google Cloud or JSON file needed.",
+                     font=ctk.CTkFont(size=12), text_color=MUTED, anchor="w",
+                     wraplength=520, justify="left").grid(row=1, column=0, sticky="w",
+                                                          padx=14, pady=(0, 4))
         inner = ctk.CTkFrame(form, fg_color="transparent")
-        inner.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 12))
+        inner.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
         inner.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(inner, text="Your email address", font=ctk.CTkFont(size=12),
@@ -448,12 +453,14 @@ class RpheApp(ctk.CTk if ctk else object):
                                        text_color=GREEN, anchor="w")
         self.detect_lbl.grid(row=2, column=0, sticky="w", pady=(0, 6))
 
-        ctk.CTkLabel(inner, text="App password", font=ctk.CTkFont(size=12),
-                     text_color=MUTED, anchor="w").grid(row=3, column=0, sticky="w")
-        self.in_app_pw = ctk.CTkEntry(inner, placeholder_text="paste an app password", show="•")
+        ctk.CTkLabel(inner, text="App password  ·  not your normal password",
+                     font=ctk.CTkFont(size=12), text_color=MUTED, anchor="w").grid(
+            row=3, column=0, sticky="w")
+        self.in_app_pw = ctk.CTkEntry(inner, placeholder_text="paste a 16-character app password",
+                                      show="•")
         self.in_app_pw.grid(row=4, column=0, sticky="ew", pady=(2, 2))
         self.in_app_pw.bind("<Return>", lambda e: self.on_add_inbox())
-        self.apppw_link = ctk.CTkButton(inner, text="How do I get an app password?",
+        self.apppw_link = ctk.CTkButton(inner, text="Get an app password (needs 2-Step Verification) →",
                                         fg_color="transparent", hover=False, anchor="w",
                                         text_color=ACCENT_TEXT,
                                         command=lambda: self._open_url(
@@ -461,10 +468,24 @@ class RpheApp(ctk.CTk if ctk else object):
                                             or "https://support.google.com/accounts/answer/185833"))
         self.apppw_link.grid(row=5, column=0, sticky="w", pady=(0, 6))
         self.in_imap_host = ctk.CTkEntry(inner, placeholder_text="IMAP host (filled automatically)")
-        self.in_imap_host.grid(row=6, column=0, sticky="ew", pady=(0, 10))
+        self.in_imap_host.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+
+        # Scan depth / coverage so it can do a full mailbox scan.
+        opts = ctk.CTkFrame(inner, fg_color="transparent")
+        opts.grid(row=7, column=0, sticky="w", pady=(0, 8))
+        ctk.CTkLabel(opts, text="Scan history", font=ctk.CTkFont(size=12),
+                     text_color=MUTED).pack(side="left")
+        self.scan_depth = ctk.CTkOptionMenu(
+            opts, width=140, values=["Last 30 days", "Last 90 days", "Last year", "All time"])
+        self.scan_depth.set("Last 90 days")
+        self.scan_depth.pack(side="left", padx=8)
+        self.include_spam = ctk.CTkCheckBox(opts, text="Include spam/junk",
+                                            font=ctk.CTkFont(size=12))
+        self.include_spam.select()
+        self.include_spam.pack(side="left", padx=14)
 
         btns = ctk.CTkFrame(inner, fg_color="transparent")
-        btns.grid(row=7, column=0, sticky="w")
+        btns.grid(row=8, column=0, sticky="w")
         ctk.CTkButton(btns, text="Connect inbox", command=self.on_add_inbox).pack(side="left")
         self.oauth_alt = ctk.CTkButton(btns, text="", fg_color="transparent", hover=False,
                                        text_color=ACCENT_TEXT, command=self._oauth_connect)
@@ -472,7 +493,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self.oauth_alt.pack_forget()
         ctk.CTkLabel(inner, text="🔒 Stored in your device keychain, never sent to us.",
                      font=ctk.CTkFont(size=11), text_color=MUTED, anchor="w").grid(
-            row=8, column=0, sticky="w", pady=(8, 0))
+            row=9, column=0, sticky="w", pady=(8, 0))
         self._set_conn_status("email", "ok" if self.engine.cfg.accounts else "todo",
                               "Connected" if self.engine.cfg.accounts else "Not connected")
 
@@ -489,7 +510,8 @@ class RpheApp(ctk.CTk if ctk else object):
         else:
             self.detect_lbl.configure(text=(info.note or ""), text_color=MUTED)
         if info.oauth:
-            self.oauth_alt.configure(text=f"Advanced: connect with {info.name} (read-only) →")
+            self.oauth_alt.configure(
+                text=f"Advanced: read-only {info.name} API (needs a Google Cloud file) →")
             self.oauth_alt.pack(side="left", padx=12)
         else:
             self.oauth_alt.pack_forget()
@@ -791,14 +813,24 @@ class RpheApp(ctk.CTk if ctk else object):
             messagebox.showinfo("RPHE", "Enter your provider's IMAP host "
                                 "(it usually fills in automatically).")
             return
+        from .providers import detect_provider
         label = suggested_label(email)
-        acct = EmailAccount(label=label, provider="imap", address=email, imap_host=host)
+        depth = {"Last 30 days": 30, "Last 90 days": 90, "Last year": 365,
+                 "All time": 36500}.get(self.scan_depth.get(), 90)
+        folders = ["INBOX"]
+        if self.include_spam.get():
+            spam = detect_provider(email).spam_folder
+            if spam:
+                folders.append(spam)
+        acct = EmailAccount(label=label, provider="imap", address=email, imap_host=host,
+                            folders=folders, lookback_days=depth)
         pw = self.in_app_pw.get()
         if pw:
             self.engine.set_imap_app_password(label, pw)
         self._save_account(acct)
         self.in_app_pw.delete(0, "end")
-        self.status.configure(text=f"Inbox '{label}' connected.")
+        self.status.configure(text=f"Inbox '{label}' connected — scanning {self.scan_depth.get().lower()}"
+                              + (" incl. spam." if self.include_spam.get() else "."))
 
     def on_remove_inbox(self, label):
         self.engine.cfg.accounts = [a for a in self.engine.cfg.accounts if a.label != label]

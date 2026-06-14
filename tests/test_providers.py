@@ -42,6 +42,13 @@ def test_bad_input_does_not_raise():
     assert detect_provider("not-an-email").key == "generic"
 
 
+def test_spam_folders():
+    assert detect_provider("a@gmail.com").spam_folder == "[Gmail]/Spam"
+    assert detect_provider("a@outlook.com").spam_folder == "Junk Email"
+    assert detect_provider("a@yahoo.com").spam_folder == "Bulk Mail"
+    assert detect_provider("a@unknown.example").spam_folder == "Junk"   # safe default
+
+
 def test_suggested_label():
     assert suggested_label("you@gmail.com") == "you-gmail"
     assert suggested_label("first.last@fastmail.com") == "first.last-fastmail"

@@ -1,17 +1,38 @@
-# Gmail end-to-end setup
+# Gmail setup
 
-This walks you from zero to `rphe scan` pulling real security alerts from your
-Gmail — using a **read-only** OAuth scope (`gmail.readonly`). The token can never
-send, delete, or modify mail, and it's stored in your OS keystore, never on disk.
+Two ways to connect Gmail. **Use the first one** unless you specifically want
+least-privilege API access — it needs no Google Cloud project and no JSON file.
 
-> **Don't want to grant any access yet?** Skip to
-> [§B Offline first (no OAuth)](#b-offline-first-no-oauth) — you can validate the
-> classifier on your real emails by exporting them as `.eml` files, with zero
-> account access.
+## Easiest: app password (recommended)
+
+Gmail no longer allows your normal password in apps, so it uses an **app
+password** — a 16-character token that replaces your password for IMAP. Creating
+one requires 2-Step Verification.
+
+1. Turn on **2-Step Verification**:
+   <https://myaccount.google.com/signinoptions/twosv>
+2. Create an app password at <https://myaccount.google.com/apppasswords>, name it
+   "RPHE", and copy the 16-character code.
+3. In RPHE → **Connect → Email inbox**: type your Gmail address (the IMAP host
+   fills in automatically), paste the app password, choose how far back to scan
+   (and leave **Include spam/junk** on — alerts often get filtered there), then
+   **Connect inbox**.
+4. Click **Scan** — RPHE reads your mailbox over IMAP. That's it.
+
+The app password lives only in your OS keychain, and you can revoke it anytime
+from the same Google page. (The CLI equivalent: `rphe secrets set
+imap.<label>.app_password`.)
+
+> **Just want to test first?** Run `rphe demo`, or drop a few exported `.eml`
+> files in a folder — see [Offline option](#offline-option). No account needed.
 
 ---
 
-## A. The OAuth path (recommended for ongoing scanning)
+## Advanced: read-only OAuth API (optional)
+
+Prefer a read-only API token (`gmail.readonly`) that never touches your password?
+This path is more locked-down but **requires creating a Google Cloud OAuth client
+and downloading a `client_secret.json`** — most people don't need it.
 
 ### 1. Create a Google Cloud project
 1. Go to <https://console.cloud.google.com/> and create a new project
@@ -73,7 +94,7 @@ whose subject/body look security-related, then classifies them locally.
 
 ---
 
-## B. Offline first (no OAuth)
+## Offline option
 
 Validate the classifier on your actual mail without granting anything:
 
