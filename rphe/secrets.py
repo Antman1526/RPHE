@@ -79,6 +79,12 @@ class SecretStore:
         return "bitwarden.session"
 
     @staticmethod
+    def bitwarden_account_key() -> str:
+        # The email the cached session belongs to, so a session can't be reused
+        # against a different logged-in account (rotate into the wrong vault).
+        return "bitwarden.account_email"
+
+    @staticmethod
     def bitwarden_master_key() -> str:
         # Optional: only stored if the user opts into unattended unlock.
         return "bitwarden.master_password"

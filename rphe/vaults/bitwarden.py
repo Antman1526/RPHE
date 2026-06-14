@@ -144,6 +144,20 @@ class BitwardenVault(VaultWriter):
         except (VaultError, json.JSONDecodeError):
             return {"status": "unknown"}
 
+    def _account_email(self) -> Optional[str]:
+        """The email of the account `bw` is currently logged into, or None.
+
+        Read from `bw status` (no session needed). Used to bind a cached session
+        to the account it was minted for so we never operate on a vault that was
+        swapped out from under us.
+        """
+        try:
+            data = json.loads(self._run(["status"], with_session=False) or "{}")
+        except (VaultError, json.JSONDecodeError):
+            return None
+        email = data.get("userEmail")
+        return email or None
+
     @_serialized
     def login_apikey(self, client_id: str, client_secret: str) -> None:
         """Authenticate with a Bitwarden personal API key (client id/secret).
@@ -168,15 +182,30 @@ class BitwardenVault(VaultWriter):
         If master_password is None we look for a stored one (opt-in unattended
         mode); otherwise the caller is expected to have prompted for it.
         """
-        # Reuse a cached session if it still validates.
+        # Reuse a cached session if it still validates AND still belongs to the
+        # account it was minted for. The session validating isn't enough: if the
+        # `bw` CLI was re-logged into a different account, reusing the old session
+        # could rotate credentials into the wrong vault.
         cached = self.store.get(self.store.bitwarden_session_key())
         if cached:
             self._session = cached
             try:
                 self._run(["sync"])  # cheap call that requires a valid session
-                return
             except VaultError:
                 self._session = None  # stale; fall through to re-unlock
+            else:
+                expected = self.store.get(self.store.bitwarden_account_key())
+                current = self._account_email()
+                if expected and current and current != expected:
+                    # Logged-in account changed out from under us — discard the
+                    # session and re-unlock so we bind to the current account.
+                    self._session = None
+                    self.store.delete(self.store.bitwarden_session_key())
+                else:
+                    if current and not expected:
+                        # Trust-on-first-use: bind the cached session now.
+                        self.store.set(self.store.bitwarden_account_key(), current)
+                    return
 
         if master_password is None:
             master_password = self.store.get(self.store.bitwarden_master_key())
@@ -189,6 +218,10 @@ class BitwardenVault(VaultWriter):
         session = self._unlock_stdin(master_password)
         self._session = session
         self.store.set(self.store.bitwarden_session_key(), session)
+        # Record which account this session belongs to (best-effort).
+        email = self._account_email()
+        if email:
+            self.store.set(self.store.bitwarden_account_key(), email)
 
     def _unlock_stdin(self, master_password: str) -> str:
         import os
@@ -215,6 +248,7 @@ class BitwardenVault(VaultWriter):
             pass  # not unlocked / not logged in — nothing to lock
         self._session = None
         self.store.delete(self.store.bitwarden_session_key())
+        self.store.delete(self.store.bitwarden_account_key())
 
     def _require_session(self) -> str:
         if not self._session:

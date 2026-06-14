@@ -16,12 +16,15 @@ class FakeBw:
     def __init__(self):
         self.items = {}
         self.counter = 0
+        self.status_email = None   # what `bw status` reports as the logged-in user
 
     @staticmethod
     def _dec(enc):
         return json.loads(base64.b64decode(enc))
 
     def run(self, args, *, stdin=None, with_session=True):
+        if args[:1] == ["status"]:
+            return json.dumps({"status": "unlocked", "userEmail": self.status_email})
         if args[:1] == ["sync"] or args[:1] == ["lock"]:
             return ""
         if args[:3] == ["get", "template", "item"]:
@@ -50,6 +53,20 @@ class FakeStore:
     @staticmethod
     def bitwarden_session_key():
         return "bitwarden.session"
+
+    @staticmethod
+    def bitwarden_account_key():
+        return "bitwarden.account_email"
+
+    @staticmethod
+    def bitwarden_master_key():
+        return "bitwarden.master_password"
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
 
     def delete(self, key):
         self.data.pop(key, None)
@@ -130,3 +147,29 @@ def test_list_pending_filters():
     pending = v.list_pending()
     names = {p.name for p in pending}
     assert "A" in names and "B" not in names
+
+
+def test_unlock_reuses_cached_session_and_binds_account():
+    # No account recorded yet: a valid cached session is reused and bound to the
+    # current account (trust-on-first-use).
+    v, fake = _vault()
+    fake.status_email = "alice@example.com"
+    v._session = None                       # force the cached-session path
+    v.unlock()
+    assert v._session == "sess"             # reused, no re-unlock
+    assert v.store.data["bitwarden.account_email"] == "alice@example.com"
+
+
+def test_unlock_rejects_session_from_a_different_account():
+    # A valid session whose recorded account no longer matches the logged-in
+    # account must be discarded and a fresh unlock performed (H3).
+    v, fake = _vault()
+    v.store.data["bitwarden.account_email"] = "alice@example.com"
+    v.store.data["bitwarden.master_password"] = "pw"   # enable re-unlock
+    fake.status_email = "bob@evil.example"            # account swapped out
+    v._unlock_stdin = lambda pw: "newsess"            # avoid real `bw` exec
+    v._session = None
+    v.unlock()
+    assert v._session == "newsess"                    # re-unlocked, not reused
+    assert v.store.data["bitwarden.session"] == "newsess"
+    assert v.store.data["bitwarden.account_email"] == "bob@evil.example"
