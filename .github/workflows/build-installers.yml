@@ -54,7 +54,7 @@ jobs:
           cp -R dist/RPHE.app dist/dmg/RPHE.app
           ln -s /Applications dist/dmg/Applications
           hdiutil create -volname RPHE -srcfolder dist/dmg -ov -format UDZO dist/RPHE.dmg
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: RPHE-macos-dmg
           path: dist/RPHE.dmg
@@ -87,7 +87,7 @@ jobs:
         run: python -m PyInstaller --noconfirm packaging/rphe_gui.spec
       - name: Check output
         run: if (-Not (Test-Path dist/RPHE.exe)) { throw "RPHE.exe missing" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: RPHE-windows-exe
           path: dist/RPHE.exe
