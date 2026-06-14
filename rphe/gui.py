@@ -73,6 +73,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self._scanned = False
         self._results_q: "queue.Queue" = queue.Queue()
         self._busy = 0
+        self._inflight = set()      # keys of operations currently running
         self.nav_buttons: dict = {}
         self.pages: dict = {}
         self.checklist: dict = {}
@@ -451,6 +452,7 @@ class RpheApp(ctk.CTk if ctk else object):
                      text_color=MUTED, anchor="w").grid(row=3, column=0, sticky="w")
         self.in_app_pw = ctk.CTkEntry(inner, placeholder_text="paste an app password", show="•")
         self.in_app_pw.grid(row=4, column=0, sticky="ew", pady=(2, 2))
+        self.in_app_pw.bind("<Return>", lambda e: self.on_add_inbox())
         self.apppw_link = ctk.CTkButton(inner, text="How do I get an app password?",
                                         fg_color="transparent", hover=False, anchor="w",
                                         text_color=ACCENT_TEXT,
@@ -561,6 +563,7 @@ class RpheApp(ctk.CTk if ctk else object):
             self.bw_cid.grid(row=1, column=0, sticky="ew", pady=(8, 4))
             self.bw_secret = ctk.CTkEntry(inner, placeholder_text="client_secret", show="•")
             self.bw_secret.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+            self.bw_secret.bind("<Return>", lambda e: self.on_bw_login())
             ctk.CTkButton(inner, text="Sign in", command=self.on_bw_login).grid(
                 row=3, column=0, sticky="w", pady=8)
             ctk.CTkButton(inner, text="Where do I find this?", fg_color="transparent",
@@ -580,6 +583,7 @@ class RpheApp(ctk.CTk if ctk else object):
                      wraplength=520, justify="left").grid(row=0, column=0, sticky="w")
         self.hibp_key = ctk.CTkEntry(body, placeholder_text="HIBP API key", show="•")
         self.hibp_key.grid(row=1, column=0, sticky="ew", pady=(8, 4))
+        self.hibp_key.bind("<Return>", lambda e: self.on_save_hibp())
         ctk.CTkButton(body, text="Save key", command=self.on_save_hibp).grid(
             row=2, column=0, sticky="w", pady=4)
         self._set_conn_status("hibp", "ok" if present else "todo",
@@ -722,7 +726,14 @@ class RpheApp(ctk.CTk if ctk else object):
         self.after(300, self._refresh_sched_status)
 
     # ===================================================================== ACTIONS
-    def _async(self, fn: Callable, on_done: Callable, busy: str = ""):
+    def _async(self, fn: Callable, on_done: Callable, busy: str = "", key: str = None):
+        # Re-entrancy guard: if an op with this key is already running, ignore the
+        # duplicate trigger (prevents double-clicks from firing two scans /
+        # rotations / vault writes). Keyless calls (status reads) aren't guarded.
+        if key is not None:
+            if key in self._inflight:
+                return
+            self._inflight.add(key)
         if busy:
             self.status.configure(text=busy)
         self._busy += 1
@@ -731,15 +742,17 @@ class RpheApp(ctk.CTk if ctk else object):
 
         def worker():
             try:
-                self._results_q.put(("ok", on_done, fn()))
+                self._results_q.put(("ok", on_done, fn(), key))
             except Exception as exc:
-                self._results_q.put(("err", on_done, exc))
+                self._results_q.put(("err", on_done, exc, key))
         threading.Thread(target=worker, daemon=True).start()
 
     def _poll_queue(self):
         try:
             while True:
-                kind, on_done, payload = self._results_q.get_nowait()
+                kind, on_done, payload, key = self._results_q.get_nowait()
+                if key is not None:
+                    self._inflight.discard(key)
                 self._busy = max(0, self._busy - 1)
                 if self._busy == 0:
                     self.progress.stop()
@@ -810,7 +823,7 @@ class RpheApp(ctk.CTk if ctk else object):
             return
         self._async(lambda: self.engine.connect_gmail(label, path),
                     lambda email_addr: self.status.configure(text=f"Gmail connected: {email_addr}"),
-                    "Opening browser for Gmail consent…")
+                    "Opening browser for Gmail consent…", key="connect")
 
     def on_connect_graph(self):
         from .providers import suggested_label
@@ -828,7 +841,7 @@ class RpheApp(ctk.CTk if ctk else object):
             self.after(0, lambda: messagebox.showinfo("Connect Outlook", text))
         self._async(lambda: self.engine.connect_graph(label, cid, show_msg),
                     lambda _: self.status.configure(text=f"Outlook connected for {label}."),
-                    "Starting Microsoft device-code sign-in…")
+                    "Starting Microsoft device-code sign-in…", key="connect")
 
     def on_bw_login(self):
         cid, sec = self.bw_cid.get().strip(), self.bw_secret.get().strip()
@@ -838,7 +851,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self._async(lambda: self.engine.bitwarden_login_apikey(cid, sec),
                     lambda _: (self._refresh_bw_body(),
                                self.status.configure(text="Signed in — now unlock your vault.")),
-                    "Signing in to Bitwarden…")
+                    "Signing in to Bitwarden…", key="bw_login")
 
     def on_unlock(self):
         pw = self._ask_secret("Unlock Bitwarden", "Bitwarden master password:")
@@ -847,7 +860,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self._async(lambda: self.engine.unlock_bitwarden(pw),
                     lambda _: (self._refresh_bw_body(), self.refresh_status(),
                                self.status.configure(text="Bitwarden unlocked.")),
-                    "Unlocking Bitwarden…")
+                    "Unlocking Bitwarden…", key="unlock")
 
     def on_save_hibp(self):
         key = self.hibp_key.get().strip()
@@ -871,7 +884,8 @@ class RpheApp(ctk.CTk if ctk else object):
             self._scanned = True
             self._render_findings(signals)
             self.status.configure(text=f"Scan complete — {len(signals)} account(s) flagged.")
-        self._async(lambda: self.engine.scan(Severity.MEDIUM), done, "Scanning inboxes…")
+        self._async(lambda: self.engine.scan(Severity.MEDIUM), done, "Scanning inboxes…",
+                    key="scan")
 
     def on_breach_report(self):
         emails = sorted({a.address for a in self.engine.cfg.accounts if a.address})
@@ -891,7 +905,7 @@ class RpheApp(ctk.CTk if ctk else object):
             self._show_text("Breach report (Have I Been Pwned)", "\n".join(lines))
             self.status.configure(text="Breach report complete.")
         self._async(lambda: self.engine.check_accounts_breached(emails), done,
-                    "Checking Have I Been Pwned…")
+                    "Checking Have I Been Pwned…", key="breach")
 
     def on_rotate(self, signal):
         RotateDialog(self, self.engine, signal)
@@ -924,7 +938,7 @@ class RpheApp(ctk.CTk if ctk else object):
                                  font=ctk.CTkFont(size=11), padx=8, pady=2).pack(side="left", padx=3)
             self.status.configure(text="Vault audit complete.")
         self._async(self.engine.audit_vault, done,
-                    "Auditing every vault login (local, k-anonymity)…")
+                    "Auditing every vault login (local, k-anonymity)…", key="audit")
 
     def on_sync(self):
         def done(r):
@@ -934,7 +948,7 @@ class RpheApp(ctk.CTk if ctk else object):
                    + ("✓ Vaults are consistent." if r.is_consistent
                       else "⚠ Drift — re-import the NordPass CSV."))
             self._show_text("Sync verify", txt)
-        self._async(self.engine.sync_report, done, "Comparing vaults…")
+        self._async(self.engine.sync_report, done, "Comparing vaults…", key="sync")
 
     def on_nordpass(self):
         self._show_text("NordPass import", self.engine.nordpass().import_instructions())
@@ -1016,7 +1030,7 @@ class RpheApp(ctk.CTk if ctk else object):
 
     def on_lock(self):
         self._async(self.engine.lock_bitwarden, lambda _: (self.refresh_status(),
-                    self.status.configure(text="Vault locked.")), "Locking…")
+                    self.status.configure(text="Vault locked.")), "Locking…", key="lock")
 
     # ---- helpers ---
     def _ask_secret(self, title, prompt, show="•"):
@@ -1088,6 +1102,7 @@ class RotateDialog(ctk.CTkToplevel if ctk else object):
         self.signal = signal
         self.on_close_cb = on_close
         self._closed = False
+        self._working = False     # re-entrancy guard for generate/apply
         self.candidates = []
         self.choice = ctk.StringVar()
 
@@ -1128,14 +1143,18 @@ class RotateDialog(ctk.CTkToplevel if ctk else object):
                       command=self._close).pack(side="right", padx=8)
 
     def on_generate(self):
+        if self._working:
+            return
+        self._working = True
         self.info.configure(text="Generating and breach-checking candidates…")
 
         def worker():
             try:
                 cands = self.engine.password_candidates(n=5, vet_pwned=True)
-                self.after(0, lambda: self._show(cands))
+                self.after(0, lambda: (self._show(cands), setattr(self, "_working", False)))
             except Exception as exc:
-                self.after(0, lambda exc=exc: self.info.configure(text=f"Error: {exc}"))
+                self.after(0, lambda exc=exc: (self.info.configure(text=f"Error: {exc}"),
+                                               setattr(self, "_working", False)))
         threading.Thread(target=worker, daemon=True).start()
 
     def _show(self, cands):
@@ -1161,6 +1180,9 @@ class RotateDialog(ctk.CTkToplevel if ctk else object):
         if not username:
             messagebox.showinfo("RPHE", "Enter the username/email for this account.")
             return
+        if self._working:
+            return                 # don't let a double-click write to the vault twice
+        self._working = True
         url = f"https://{self.signal.sender_domain}" if self.signal.sender_domain else None
         self.info.configure(text="Storing in Bitwarden + NordPass…")
 
@@ -1171,7 +1193,8 @@ class RotateDialog(ctk.CTkToplevel if ctk else object):
                                          kind=self.signal.kind.value)
                 self.after(0, lambda: self._done(res))
             except Exception as exc:
-                self.after(0, lambda exc=exc: self.info.configure(text=f"Error: {exc}"))
+                self.after(0, lambda exc=exc: (self.info.configure(text=f"Error: {exc}"),
+                                               setattr(self, "_working", False)))
         threading.Thread(target=worker, daemon=True).start()
 
     def _done(self, res):
