@@ -78,13 +78,19 @@ class GraphScanner(Scanner):
             "$orderby": "receivedDateTime desc",
         }
         url = f"{GRAPH}/me/messages"
+        # Graph can't combine $search with $filter/$orderby, so we filter by date
+        # and classify locally — but cap total messages so a huge/"All time"
+        # mailbox can't trigger thousands of paged requests.
+        max_messages = 3000
+        seen = 0
         with requests.Session() as s:
             s.headers.update(headers)
-            while url:
+            while url and seen < max_messages:
                 r = s.get(url, params=params, timeout=30)
                 r.raise_for_status()
                 data = r.json()
                 for m in data.get("value", []):
+                    seen += 1
                     body = m.get("body", {}) or {}
                     content = body.get("content", "") or m.get("bodyPreview", "")
                     if (body.get("contentType") or "").lower() == "html":

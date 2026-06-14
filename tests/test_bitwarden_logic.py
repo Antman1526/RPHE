@@ -5,6 +5,7 @@ low-level _run() with an in-memory store that interprets the same commands.
 """
 import base64
 import json
+import threading
 from datetime import datetime, timezone
 
 from rphe.models import GeneratedCredential
@@ -61,6 +62,7 @@ def _vault():
     v.timeout = 10
     v._session = "sess"
     v._folder_id = "fld1"          # skip folder creation
+    v._oplock = threading.RLock()  # normally set in __init__ (bypassed here)
     v.store = FakeStore()
     fake = FakeBw()
     v._run = fake.run

@@ -343,7 +343,7 @@ rphe schedule status              # is the scheduled scan installed?
 rphe rotate --automate            # assisted browser (still pauses for you)
 rphe sync verify                  # Bitwarden vs NordPass CSV drift
 rphe nordpass instructions        # how to import the staged CSV
-rphe nordpass clean               # shred the staged CSV after importing
+rphe nordpass clean               # overwrite + delete the staged CSV after importing
 rphe audit                        # redacted event log
 
 pytest -q                         # run the test suite
@@ -475,7 +475,7 @@ in-app "import from Bitwarden". Therefore:
 |---|---|
 | Lockout from a burned reset link | Guided-first; assisted mode pauses, never auto-submits |
 | Acting on a phishing "breach" email | Sender host shown; human link-trust checkpoint; never auto-clicks links |
-| Plaintext exposure via CSV | `0600` perms, atomic write, `nordpass clean` shred, import-then-delete |
+| Plaintext exposure via CSV | `0600` perms, atomic write, `nordpass clean` overwrite+delete (best-effort on SSD/CoW), import-then-delete |
 | Secret leakage to logs/argv | `repr=False`, fingerprint-only audit, redaction pass, STDIN not argv |
 | Stale Bitwarden session | Session validated each run; re-unlock on failure |
 

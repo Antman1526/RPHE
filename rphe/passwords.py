@@ -88,10 +88,10 @@ def generate_password(policy: PasswordPolicy) -> str:
 def generate_passphrase(policy: PasswordPolicy) -> str:
     """Generate a separator-joined passphrase (e.g. correct-horse-battery)."""
     words = [secrets.choice(_WORDS) for _ in range(max(3, policy.passphrase_words))]
-    # Sprinkle one digit + capital so it satisfies "must contain number" rules.
-    words[secrets.randbelow(len(words))] = words[
-        secrets.randbelow(len(words))
-    ].capitalize()
+    # Capitalise ONE word in place (don't read one index and write another — that
+    # could duplicate a word and lose entropy) so "must contain uppercase" holds.
+    cap = secrets.randbelow(len(words))
+    words[cap] = words[cap].capitalize()
     phrase = policy.passphrase_separator.join(words)
     return f"{phrase}{policy.passphrase_separator}{secrets.randbelow(100):02d}"
 

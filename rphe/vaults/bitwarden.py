@@ -14,11 +14,13 @@ Security notes:
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -26,6 +28,18 @@ from typing import Optional
 from ..models import GeneratedCredential, VaultItem
 from ..secrets import SecretStore
 from .base import VaultError, VaultWriter
+
+
+def _serialized(fn):
+    """Serialize a vault operation on the instance's _oplock so logical, multi-
+    subprocess operations (e.g. rotate's list→edit→sync) can't interleave with
+    a concurrent lock()/unlock()/another write from a different thread.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._oplock:
+            return fn(self, *args, **kwargs)
+    return wrapper
 
 # Bitwarden item type 1 == Login.
 _LOGIN_TYPE = 1
@@ -81,6 +95,7 @@ class BitwardenVault(VaultWriter):
         self.timeout = timeout
         self._session: Optional[str] = None
         self._folder_id: Optional[str] = None
+        self._oplock = threading.RLock()   # serializes logical vault operations
         self.bw = find_bw()
         if not self.bw:
             raise VaultError(
@@ -118,6 +133,7 @@ class BitwardenVault(VaultWriter):
         return proc.stdout.strip()
 
     # --- status / login (used by the GUI setup screen) ---------------------
+    @_serialized
     def status(self) -> dict:
         """Return `bw status` as a dict: status is one of
         'unauthenticated' | 'locked' | 'unlocked'. Never needs a session.
@@ -128,6 +144,7 @@ class BitwardenVault(VaultWriter):
         except (VaultError, json.JSONDecodeError):
             return {"status": "unknown"}
 
+    @_serialized
     def login_apikey(self, client_id: str, client_secret: str) -> None:
         """Authenticate with a Bitwarden personal API key (client id/secret).
 
@@ -144,6 +161,7 @@ class BitwardenVault(VaultWriter):
             raise VaultError(f"Bitwarden API-key login failed: {proc.stderr.strip()}")
 
     # --- session management -------------------------------------------------
+    @_serialized
     def unlock(self, master_password: Optional[str] = None) -> None:
         """Unlock the vault and cache the session key in the OS keystore.
 
@@ -184,6 +202,7 @@ class BitwardenVault(VaultWriter):
             raise VaultError("Bitwarden unlock failed: check master password / login status.")
         return proc.stdout.strip()
 
+    @_serialized
     def lock(self) -> None:
         """Lock the vault: run `bw lock` and drop the cached session key.
 
@@ -257,6 +276,7 @@ class BitwardenVault(VaultWriter):
         fields.append({"name": name, "value": value, "type": 0})
         item["fields"] = fields
 
+    @_serialized
     def upsert(self, cred: GeneratedCredential, status: str = "pending") -> VaultItem:
         """Create/update a login. Lockout-safe: the previous password is pushed
         into Bitwarden's passwordHistory and the item is tagged
@@ -314,30 +334,35 @@ class BitwardenVault(VaultWriter):
         )
 
     # --- pending / confirm / revert ----------------------------------------
+    @_serialized
     def set_status(self, item_id: str, status: str) -> None:
         item = json.loads(self._run(["get", "item", item_id]))
         self._set_field(item, "rphe_status", status)
         self._run(["edit", "item", item_id, self._encode(item)])
         self._run(["sync"])
 
+    @_serialized
     def revert(self, item_id: str) -> bool:
         """Restore the previous password from passwordHistory. Returns False if
         there's nothing to revert to. Never returns/logs the plaintext.
         """
         item = json.loads(self._run(["get", "item", item_id]))
-        history = (item.get("login") or {}).get("passwordHistory") or []
+        login = item.setdefault("login", {}) or {}
+        item["login"] = login
+        history = login.get("passwordHistory") or []
         if not history:
             return False
         prev = history[0].get("password")
         if not prev:
             return False
-        item["login"]["password"] = prev
-        item["login"]["passwordHistory"] = history[1:]
+        login["password"] = prev
+        login["passwordHistory"] = history[1:]
         self._set_field(item, "rphe_status", "reverted")
         self._run(["edit", "item", item_id, self._encode(item)])
         self._run(["sync"])
         return True
 
+    @_serialized
     def list_pending(self) -> list[VaultItem]:
         out = []
         for it in json.loads(self._run(["list", "items"]) or "[]"):
@@ -351,6 +376,7 @@ class BitwardenVault(VaultWriter):
                     url=(uris[0]["uri"] if uris else None), item_id=it.get("id")))
         return out
 
+    @_serialized
     def audit_logins(self) -> list[dict]:
         """Return every login with the data the vault audit needs. The password
         is included (plaintext, in memory only) so the engine can run the free
@@ -371,6 +397,7 @@ class BitwardenVault(VaultWriter):
             })
         return out
 
+    @_serialized
     def list_items(self) -> list[VaultItem]:
         raw = json.loads(self._run(["list", "items"]) or "[]")
         out: list[VaultItem] = []

@@ -80,7 +80,15 @@ def _extract_reset_url(body: str, sender_domain: str) -> Optional[str]:
     candidates = _URL.findall(body or "")
     if not candidates:
         return None
-    same_domain = [u for u in candidates if sender_domain and sender_domain in u]
+    # Match on the registrable domain of the URL *host* (not a naive substring of
+    # the whole URL), so 'apple.com.evil.test' / '?ref=apple.com' don't qualify
+    # as the sender's domain.
+    from urllib.parse import urlparse
+
+    from .linksafety import registrable_domain
+    sender_rd = registrable_domain(sender_domain or "")
+    same_domain = [u for u in candidates
+                   if sender_rd and registrable_domain(urlparse(u).hostname or "") == sender_rd]
     resetish = [u for u in (same_domain or candidates) if _RESET_PATH_HINT.search(u)]
     chosen = (resetish or same_domain or candidates)
     return chosen[0] if chosen else None

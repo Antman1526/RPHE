@@ -120,13 +120,19 @@ class NordPassBridge(VaultWriter):
             "  2. Settings → Import → choose 'CSV file' (or 'Other').\n"
             f"  3. Select: {self.export_path}\n"
             "  4. Confirm the column mapping (name/url/username/password/note/folder).\n"
-            "  5. After it imports, run `rphe nordpass clean` to shred this CSV.\n"
+            "  5. After it imports, run `rphe nordpass clean` to delete this CSV.\n"
             "NOTE: NordPass import ADDS items; remove old duplicates inside the app\n"
             "or rely on the sync verifier to flag them."
         )
 
     def clean(self) -> None:
-        """Best-effort secure delete of the staged CSV (overwrite then unlink)."""
+        """Overwrite the staged CSV with zeros, then delete it.
+
+        Honest caveat: this is *best-effort*. On copy-on-write filesystems
+        (APFS/Btrfs) and SSDs (wear-levelling), overwriting in place doesn't
+        guarantee the old bytes are gone — treat it as 'delete promptly after
+        import', not a forensic secure-erase.
+        """
         if not self.export_path.exists():
             return
         try:

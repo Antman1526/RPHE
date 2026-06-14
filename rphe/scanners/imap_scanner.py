@@ -61,32 +61,40 @@ class ImapScanner(Scanner):
         try:
             conn.login(self.account.address, app_password)
             for folder in self.account.folders:
-                # readonly=True => never sets the \Seen flag; truly read-only.
-                status, _ = conn.select(f'"{folder}"', readonly=True)
-                if status != "OK":
-                    continue
-                typ, data = conn.search(None, "SINCE", since)
-                if typ != "OK" or not data or not data[0]:
-                    continue
-                for num in data[0].split():
-                    typ, msg_data = conn.fetch(num, "(RFC822)")
-                    if typ != "OK" or not msg_data or not msg_data[0]:
+                # One unreadable folder (or message) must not abort the others —
+                # the Spam folder is where alerts often land.
+                try:
+                    status, _ = conn.select(f'"{folder}"', readonly=True)
+                    if status != "OK":
                         continue
-                    raw = msg_data[0][1]
-                    msg = email.message_from_bytes(raw)
+                    typ, data = conn.search(None, "SINCE", since)
+                    if typ != "OK" or not data or not data[0]:
+                        continue
+                    nums = data[0].split()
+                except Exception:
+                    continue
+                for num in nums:
                     try:
-                        received = parsedate_to_datetime(msg.get("Date"))
-                        if received and received.tzinfo is None:
-                            received = received.replace(tzinfo=timezone.utc)
+                        typ, msg_data = conn.fetch(num, "(RFC822)")
+                        if typ != "OK" or not msg_data or not msg_data[0]:
+                            continue
+                        msg = email.message_from_bytes(msg_data[0][1])
+                        try:
+                            received = parsedate_to_datetime(msg.get("Date"))
+                            if received and received.tzinfo is None:
+                                received = received.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            received = self.since_date()
+                        item = {
+                            "message_id": msg.get("Message-ID", f"{folder}:{num.decode()}"),
+                            "from": self._decode(msg.get("From")),
+                            "subject": self._decode(msg.get("Subject")),
+                            "body": self._extract_body(msg),
+                            "received_at": (received or self.since_date()).astimezone(timezone.utc),
+                        }
                     except Exception:
-                        received = self.since_date()
-                    yield {
-                        "message_id": msg.get("Message-ID", f"{folder}:{num.decode()}"),
-                        "from": self._decode(msg.get("From")),
-                        "subject": self._decode(msg.get("Subject")),
-                        "body": self._extract_body(msg),
-                        "received_at": received.astimezone(timezone.utc),
-                    }
+                        continue   # skip one malformed message, keep scanning
+                    yield item
         finally:
             try:
                 conn.logout()

@@ -75,6 +75,10 @@ class BreachSignal:
                 lambda m: f"https://{m.group(1)}/<redacted>",
                 d["raw_snippet"],
             )
+        # Subjects occasionally carry a one-time code ("your code is 123456") —
+        # mask standalone 4-8 digit runs so the audit log stays shareable.
+        if d.get("subject"):
+            d["subject"] = re.sub(r"\b\d{4,8}\b", "<redacted>", d["subject"])
         return d
 
 

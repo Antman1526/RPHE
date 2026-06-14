@@ -43,6 +43,19 @@ def test_reset_link_extracted_prefers_sender_domain():
     assert sig.reset_url.startswith("https://github.com/password_reset")
 
 
+def test_reset_link_ignores_lookalike_domain():
+    # 'github.com.evil.test' contains 'github.com' as a substring but is NOT the
+    # sender's registrable domain — the real github.com link must be chosen.
+    sig = classify(
+        message_id="lk", from_header="noreply@github.com",
+        subject="Reset your password",
+        body="Bad: https://github.com.evil.test/reset?token=BAD "
+             "Good: https://github.com/password_reset?token=GOOD",
+        received_at=_now())
+    assert sig is not None
+    assert sig.reset_url.startswith("https://github.com/password_reset")
+
+
 def test_marketing_email_ignored():
     sig = classify(
         message_id="4", from_header="Deals <news@store.com>",

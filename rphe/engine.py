@@ -218,10 +218,12 @@ class Engine:
         logins = self.bitwarden().audit_logins()
         checker = self.breach_checker()
 
+        # Full hash (not truncated) so distinct passwords can't collide and be
+        # mislabelled "reused".
         by_fp: dict[str, list] = {}
         for l in logins:
             if l["password"]:
-                fp = hashlib.sha256(l["password"].encode()).hexdigest()[:8]
+                fp = hashlib.sha256(l["password"].encode()).hexdigest()
                 by_fp.setdefault(fp, []).append(l["name"])
 
         pwned_cache: dict[str, int] = {}
@@ -230,7 +232,7 @@ class Engine:
             pw = l["password"]
             if not pw:
                 continue
-            fp = hashlib.sha256(pw.encode()).hexdigest()[:8]
+            fp = hashlib.sha256(pw.encode()).hexdigest()
             issues = []
             if check_pwned:
                 if fp not in pwned_cache:
@@ -348,6 +350,14 @@ class Engine:
 
     def set_imap_app_password(self, account_label: str, password: str) -> None:
         self.store.set(self.store.imap_password_key(account_label), password)
+
+    def forget_account_secrets(self, label: str) -> None:
+        """Remove every keychain secret tied to an inbox (app password, OAuth
+        token, Graph client id) so removing an inbox actually revokes access."""
+        for key in (self.store.imap_password_key(label),
+                    self.store.oauth_token_key(label),
+                    f"graph.{label}.client_id"):
+            self.store.delete(key)
 
     def connect_gmail(self, label: str, client_secret_path: str) -> str:
         """Run the Gmail OAuth flow (opens a browser) and store the token.

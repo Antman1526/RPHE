@@ -729,7 +729,7 @@ def nordpass_clean():
     from .vaults import NordPassBridge
     NordPassBridge(cfg.resolved_nordpass_export, cfg.bitwarden_folder).clean()
     audit.event("nordpass.clean", result="ok")
-    console.print("[green]Staged CSV shredded.[/]")
+    console.print("[green]Staged CSV overwritten and deleted (best-effort).[/]")
 
 
 # --------------------------------------------------------------------------- #

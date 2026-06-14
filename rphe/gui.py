@@ -846,7 +846,7 @@ class RpheApp(ctk.CTk if ctk else object):
     def on_remove_inbox(self, label):
         self.engine.cfg.accounts = [a for a in self.engine.cfg.accounts if a.label != label]
         self.engine.save(self.engine.cfg)
-        self.engine.store.delete(self.engine.store.imap_password_key(label))
+        self.engine.forget_account_secrets(label)   # app pw + OAuth token + client id
         self._refresh_account_list()
         self._set_conn_status("email", "ok" if self.engine.cfg.accounts else "todo",
                               "Connected" if self.engine.cfg.accounts else "Not connected")
