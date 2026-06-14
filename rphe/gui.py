@@ -965,33 +965,58 @@ class RpheApp(ctk.CTk if ctk else object):
     # ---- vault health ---
     def on_vault_audit(self):
         def done(report):
-            for w in self.health_area.winfo_children():
-                w.destroy()
-            head = self._card(self.health_area); head.grid(row=0, column=0, sticky="ew", pady=4)
-            ctk.CTkLabel(head, text=f"Scanned {report['scanned']} logins · "
-                         f"{len(report['findings'])} need attention",
-                         font=ctk.CTkFont(size=15, weight="bold"), anchor="w").grid(
-                row=0, column=0, sticky="w", padx=16, pady=12)
-            if not report["findings"]:
-                self._muted(head, "✅ No weak, reused or breached passwords.").grid(
-                    row=1, column=0, sticky="w", padx=16, pady=(0, 12))
-            for i, f in enumerate(report["findings"], start=1):
-                c = self._card(self.health_area); c.grid(row=i, column=0, sticky="ew", pady=4)
-                c.grid_columnconfigure(0, weight=1)
-                ctk.CTkLabel(c, text=f"{f['name']}  ·  {f['username']}",
-                             font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
-                    row=0, column=0, sticky="w", padx=14, pady=(10, 0))
-                ctk.CTkButton(c, text="Rotate…", width=90,
-                              command=lambda fi=f: self._rotate_vault_finding(fi)).grid(
-                    row=0, column=1, rowspan=2, padx=12)
-                bf = ctk.CTkFrame(c, fg_color="transparent"); bf.grid(row=1, column=0, sticky="w", padx=10, pady=(2, 10))
-                for issue in f["issues"]:
-                    col = RED if "breached" in issue else (AMBER if "weak" in issue else ("#7c3aed", "#a78bfa"))
-                    ctk.CTkLabel(bf, text=issue, fg_color=col, text_color="#fff", corner_radius=10,
-                                 font=ctk.CTkFont(size=11), padx=8, pady=2).pack(side="left", padx=3)
+            self._render_audit(report, {})
             self.status.configure(text="Vault audit complete.")
+            # Phase 2: name *which* breaches exposed each account's email (HIBP).
+            if self.engine.store.get(self.engine.store.hibp_api_key()) is not None:
+                emails = sorted({f["username"] for f in report["findings"]
+                                 if "@" in (f.get("username") or "")
+                                 and any("breached" in i for i in f["issues"])})
+                if emails:
+                    self._async(
+                        lambda: self.engine.check_accounts_breached(emails),
+                        lambda res: self._render_audit(
+                            report, {r.name: r.breach_titles for r in res if r.breached}),
+                        "Looking up which breaches exposed these accounts…", key="audit_sites")
         self._async(self.engine.audit_vault, done,
                     "Auditing every vault login (local, k-anonymity)…", key="audit")
+
+    def _render_audit(self, report, breach_sites):
+        for w in self.health_area.winfo_children():
+            w.destroy()
+        head = self._card(self.health_area)
+        head.grid(row=0, column=0, sticky="ew", pady=4)
+        ctk.CTkLabel(head, text=f"Scanned {report['scanned']} logins · "
+                     f"{len(report['findings'])} need attention",
+                     font=ctk.CTkFont(size=15, weight="bold"), anchor="w").grid(
+            row=0, column=0, sticky="w", padx=16, pady=12)
+        if not report["findings"]:
+            self._muted(head, "✅ No weak, reused or breached passwords.").grid(
+                row=1, column=0, sticky="w", padx=16, pady=(0, 12))
+        for i, f in enumerate(report["findings"], start=1):
+            c = self._card(self.health_area)
+            c.grid(row=i, column=0, sticky="ew", pady=4)
+            c.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(c, text=f"{f['name']}  ·  {f['username']}",
+                         font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
+                row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+            ctk.CTkButton(c, text="Rotate…", width=90,
+                          command=lambda fi=f: self._rotate_vault_finding(fi)).grid(
+                row=0, column=1, rowspan=3, padx=12)
+            bf = ctk.CTkFrame(c, fg_color="transparent")
+            bf.grid(row=1, column=0, sticky="w", padx=10, pady=(2, 4))
+            for issue in f["issues"]:
+                col = RED if "breached" in issue else (AMBER if "weak" in issue else ("#7c3aed", "#a78bfa"))
+                ctk.CTkLabel(bf, text=issue, fg_color=col, text_color="#fff", corner_radius=10,
+                             font=ctk.CTkFont(size=11), padx=8, pady=2).pack(side="left", padx=3)
+            titles = breach_sites.get(f.get("username"))
+            if titles:
+                ctk.CTkLabel(c, text="Exposed in: " + ", ".join(titles[:6]),
+                             font=ctk.CTkFont(size=12), text_color=RED, anchor="w",
+                             wraplength=460, justify="left").grid(
+                    row=2, column=0, sticky="w", padx=14, pady=(0, 10))
+            else:
+                ctk.CTkFrame(c, fg_color="transparent", height=4).grid(row=2, column=0, pady=(0, 6))
 
     def on_sync(self):
         def done(r):
