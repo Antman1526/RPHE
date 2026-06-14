@@ -53,15 +53,34 @@ class NordPassBridge(VaultWriter):
             return list(csv.DictReader(fh))
 
     def _write_rows(self, rows: list[dict]) -> None:
-        # Write to a temp file then atomically replace, locking perms first.
+        # Write to a temp file then atomically replace. The temp file is created
+        # owner-only (0600) BEFORE any plaintext is written — opening with the
+        # default umask first would leave a brief window where the credentials
+        # CSV is group/world-readable.
         tmp = self.export_path.with_suffix(".tmp")
-        with tmp.open("w", encoding="utf-8", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
-            writer.writeheader()
-            for r in rows:
-                writer.writerow({c: r.get(c, "") for c in _COLUMNS})
         if sys.platform != "win32":
-            os.chmod(tmp, 0o600)
+            # O_EXCL so we never write into a pre-existing (possibly attacker-
+            # planted, wider-perm) file at this path.
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+
+            def _opener(path, flags):  # reuse the already-secured fd
+                return fd
+
+            with open(tmp, "w", encoding="utf-8", newline="", opener=_opener) as fh:
+                writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
+                writer.writeheader()
+                for r in rows:
+                    writer.writerow({c: r.get(c, "") for c in _COLUMNS})
+        else:
+            with tmp.open("w", encoding="utf-8", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=_COLUMNS)
+                writer.writeheader()
+                for r in rows:
+                    writer.writerow({c: r.get(c, "") for c in _COLUMNS})
         os.replace(tmp, self.export_path)
 
     def upsert(self, cred: GeneratedCredential) -> VaultItem:

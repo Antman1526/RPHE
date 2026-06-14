@@ -39,18 +39,24 @@ def _macos(title: str, message: str) -> bool:
 
 def _windows(title: str, message: str) -> bool:
     # Uses the built-in Windows.UI.Notifications API via PowerShell — no deps.
-    ps = f'''
+    # SECURITY: the title/message can come from email-derived service names, so
+    # they are NEVER interpolated into the script (PowerShell injection risk like
+    # `")` / `$(...)`). They are passed out-of-band as environment variables and
+    # read back inside PowerShell, where they are inert data, not code.
+    import os
+    ps = '''
 $ErrorActionPreference = 'SilentlyContinue'
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $texts = $template.GetElementsByTagName("text")
-$texts.Item(0).AppendChild($template.CreateTextNode("{title}")) | Out-Null
-$texts.Item(1).AppendChild($template.CreateTextNode("{message}")) | Out-Null
+$texts.Item(0).AppendChild($template.CreateTextNode($env:RPHE_NOTIFY_TITLE)) | Out-Null
+$texts.Item(1).AppendChild($template.CreateTextNode($env:RPHE_NOTIFY_MESSAGE)) | Out-Null
 $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("RPHE").Show($toast)
 '''
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
-                   capture_output=True, timeout=15)
+    env = {**os.environ, "RPHE_NOTIFY_TITLE": title, "RPHE_NOTIFY_MESSAGE": message}
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                   capture_output=True, timeout=15, env=env)
     return True
 
 

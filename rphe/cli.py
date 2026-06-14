@@ -428,60 +428,67 @@ def rotate(
     except ImportError:
         pyperclip = None
 
-    rotated = 0
-    for s in signals:
-        console.rule(f"{s.service_name}  [{s.severity.name}]")
-        console.print(f"Why flagged: {s.rationale}")
-        if not yes and not Confirm.ask(f"Rotate the password for {s.service_name}?", default=True):
-            continue
-
-        username = typer.prompt(f"Username/email for {s.service_name}",
-                                default=s.account_hint or "")
-        new_password = _pick_password(engine)
-        if not new_password:
-            continue
-
-        url = f"https://{s.sender_domain}" if s.sender_domain else None
-        res = engine.rotate(service_name=s.service_name, username=username,
-                            password=new_password, url=url, kind=s.kind.value)
-        if not res.bitwarden_ok:
-            console.print(f"[red]Bitwarden write failed: {res.error} — skipping.[/]")
-            continue
-        console.print(f"[green]Bitwarden: "
-                      f"{'stored & verified' if res.verified else 'stored'}[/]"
-                      f" (id {res.bitwarden_id})")
-        console.print(f"[green]NordPass: "
-                      f"{'staged into CSV' if res.nordpass_staged else 'FAILED'}[/]")
-        console.print("[dim]Vault item marked PENDING — confirm it works with "
-                      f"`rphe confirm \"{s.service_name}\"`, or `rphe revert` to roll back.[/]")
-
+    def _clear_clipboard():
+        # Never leave a password on the clipboard — clear even if the run is
+        # interrupted (Ctrl-C) or errors out mid-rotation.
         if pyperclip:
             try:
-                pyperclip.copy(new_password)
-                console.print("[dim]New password copied to clipboard.[/]")
+                pyperclip.copy("")
             except Exception:
                 pass
 
-        if s.reset_url and not s.reset_url_trusted:
-            console.print(f"[bold red]⚠ PHISHING RISK:[/] {s.reset_url_note}\n"
-                          "[red]Do NOT click the emailed link — open the site yourself.[/]")
-        plan = orch.build_plan(s)
-        console.print(plan.render())
-        if automate and plan.automatable:
-            console.print("[yellow]Launching assisted browser… it will pause for you.[/]")
-            console.print(f"[dim]{orch.assist(plan, res_cred(s, username, new_password, url))}[/]")
-        console.print("\n" + render_passkey(res.passkey))
-        audit.event("reset.plan", service=s.service_name, automatable=plan.automatable)
-        rotated += 1
+    rotated = 0
+    try:
+        for s in signals:
+            console.rule(f"{s.service_name}  [{s.severity.name}]")
+            console.print(f"Why flagged: {s.rationale}")
+            if not yes and not Confirm.ask(f"Rotate the password for {s.service_name}?", default=True):
+                continue
+
+            username = typer.prompt(f"Username/email for {s.service_name}",
+                                    default=s.account_hint or "")
+            new_password = _pick_password(engine)
+            if not new_password:
+                continue
+
+            url = f"https://{s.sender_domain}" if s.sender_domain else None
+            res = engine.rotate(service_name=s.service_name, username=username,
+                                password=new_password, url=url, kind=s.kind.value)
+            if not res.bitwarden_ok:
+                console.print(f"[red]Bitwarden write failed: {res.error} — skipping.[/]")
+                continue
+            console.print(f"[green]Bitwarden: "
+                          f"{'stored & verified' if res.verified else 'stored'}[/]"
+                          f" (id {res.bitwarden_id})")
+            console.print(f"[green]NordPass: "
+                          f"{'staged into CSV' if res.nordpass_staged else 'FAILED'}[/]")
+            console.print("[dim]Vault item marked PENDING — confirm it works with "
+                          f"`rphe confirm \"{s.service_name}\"`, or `rphe revert` to roll back.[/]")
+
+            if pyperclip:
+                try:
+                    pyperclip.copy(new_password)
+                    console.print("[dim]New password copied to clipboard (cleared when this finishes).[/]")
+                except Exception:
+                    pass
+
+            if s.reset_url and not s.reset_url_trusted:
+                console.print(f"[bold red]⚠ PHISHING RISK:[/] {s.reset_url_note}\n"
+                              "[red]Do NOT click the emailed link — open the site yourself.[/]")
+            plan = orch.build_plan(s)
+            console.print(plan.render())
+            if automate and plan.automatable:
+                console.print("[yellow]Launching assisted browser… it will pause for you.[/]")
+                console.print(f"[dim]{orch.assist(plan, res_cred(s, username, new_password, url))}[/]")
+            console.print("\n" + render_passkey(res.passkey))
+            audit.event("reset.plan", service=s.service_name, automatable=plan.automatable)
+            rotated += 1
+    finally:
+        _clear_clipboard()
 
     console.rule("Done")
     console.print(f"[bold]Rotated {rotated} account(s).[/]")
     console.print(engine.nordpass().import_instructions())
-    if pyperclip:
-        try:
-            pyperclip.copy("")  # clear clipboard
-        except Exception:
-            pass
 
 
 def res_cred(signal, username, password, url):

@@ -17,12 +17,17 @@ class FakeBw:
         self.items = {}
         self.counter = 0
         self.status_email = None   # what `bw status` reports as the logged-in user
+        self.argv_log = []         # every argv list `bw` was invoked with
+        self.stdin_log = []        # every stdin payload (encoded items live here)
 
     @staticmethod
     def _dec(enc):
         return json.loads(base64.b64decode(enc))
 
     def run(self, args, *, stdin=None, with_session=True):
+        self.argv_log.append(list(args))
+        if stdin is not None:
+            self.stdin_log.append(stdin)
         if args[:1] == ["status"]:
             return json.dumps({"status": "unlocked", "userEmail": self.status_email})
         if args[:1] == ["sync"] or args[:1] == ["lock"]:
@@ -36,11 +41,12 @@ class FakeBw:
         if args[:2] == ["get", "item"]:
             return json.dumps(self.items[args[2]])
         if args[:2] == ["create", "item"]:
-            obj = self._dec(args[2]); self.counter += 1
+            # Encoded item now arrives via STDIN, never as an argv argument.
+            obj = self._dec(stdin); self.counter += 1
             obj["id"] = f"id{self.counter}"; self.items[obj["id"]] = obj
             return json.dumps(obj)
         if args[:2] == ["edit", "item"]:
-            obj = self._dec(args[3]); obj["id"] = args[2]
+            obj = self._dec(stdin); obj["id"] = args[2]
             self.items[obj["id"]] = obj
             return json.dumps(obj)
         return "[]"
@@ -173,3 +179,84 @@ def test_unlock_rejects_session_from_a_different_account():
     assert v._session == "newsess"                    # re-unlocked, not reused
     assert v.store.data["bitwarden.session"] == "newsess"
     assert v.store.data["bitwarden.account_email"] == "bob@evil.example"
+
+
+def _argv_contains_secret(argv_log, secret):
+    """True if the plaintext password (or its base64 encoding) appears in argv."""
+    for argv in argv_log:
+        for a in argv:
+            if secret in a:
+                return True
+            # Defensive: any base64 blob in argv that decodes to contain the pw.
+            try:
+                if secret in base64.b64decode(a).decode("utf-8", "ignore"):
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def test_create_never_puts_password_on_argv():
+    # CRITICAL (H1): the encoded item carrying the new plaintext password must
+    # travel via STDIN, never as a command-line argument (argv is world-visible
+    # via `ps` / /proc/<pid>/cmdline).
+    v, fake = _vault()
+    secret = "SuperSecret-Create-999"
+    v.upsert(_cred(secret))
+    assert not _argv_contains_secret(fake.argv_log, secret)
+    # ...and it really did go through stdin (base64-encoded item payload).
+    def _stdin_has(secret):
+        for s in fake.stdin_log:
+            try:
+                if secret in base64.b64decode(s).decode("utf-8", "ignore"):
+                    return True
+            except Exception:
+                pass
+        return False
+    assert _stdin_has(secret)
+
+
+def test_edit_and_revert_never_put_password_on_argv():
+    v, fake = _vault()
+    v.upsert(_cred("OldPass-111"))
+    v.upsert(_cred("NewPass-222"))     # edit path
+    item = v.list_pending()[0]
+    v.set_status(item.item_id, "confirmed")
+    v.revert(item.item_id)             # revert path restores OldPass-111
+    for secret in ("OldPass-111", "NewPass-222"):
+        assert not _argv_contains_secret(fake.argv_log, secret)
+
+
+def test_run_redacts_secrets_in_error_text():
+    # HIGH (H2): if `bw` exits non-zero and echoes secret-looking text to stderr,
+    # it must be scrubbed before bubbling up into an exception / the GUI.
+    import subprocess
+    from rphe.vaults.base import VaultError
+    from rphe.vaults import bitwarden as bw_mod
+
+    v = BitwardenVault.__new__(BitwardenVault)
+    v.bw = "/fake/bw"
+    v.timeout = 5
+    v._session = "sess"
+    v.store = FakeStore()
+
+    class _Proc:
+        returncode = 1
+        stdout = ""
+        stderr = 'error: password=Hunter2Plaintext token=abc123 failed'
+
+    def _fake_subprocess_run(*a, **k):
+        return _Proc()
+
+    orig = subprocess.run
+    bw_mod.subprocess.run = _fake_subprocess_run
+    try:
+        try:
+            v._run(["edit", "item", "x"], stdin="whatever")
+            assert False, "expected VaultError"
+        except VaultError as exc:
+            msg = str(exc)
+            assert "Hunter2Plaintext" not in msg
+            assert "redacted" in msg.lower()
+    finally:
+        bw_mod.subprocess.run = orig

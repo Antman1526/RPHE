@@ -25,9 +25,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from ..audit import _redact
 from ..models import GeneratedCredential, VaultItem
 from ..secrets import SecretStore
 from .base import VaultError, VaultWriter
+
+# Environment variables a child `bw` process legitimately needs. We pass ONLY
+# these (plus the BW_* secrets a given call requires) instead of inheriting all
+# of os.environ, so session keys / API secrets don't leak to unrelated
+# grandchildren, crash reporters, or telemetry that read a child's environ.
+_PASSTHROUGH_ENV = (
+    "PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot",
+    "TMP", "TEMP", "TMPDIR", "LANG", "LC_ALL", "BITWARDENCLI_APPDATA_DIR",
+)
+
+
+def _child_env(extra: Optional[dict] = None) -> dict:
+    env = {"BW_NOINTERACTIVE": "true"}
+    for var in _PASSTHROUGH_ENV:
+        val = os.environ.get(var)
+        if val is not None:
+            env[var] = val
+    if extra:
+        env.update(extra)
+    return env
 
 
 def _serialized(fn):
@@ -108,12 +129,11 @@ class BitwardenVault(VaultWriter):
 
     # --- low-level command runner ------------------------------------------
     def _run(self, args: list[str], *, stdin: Optional[str] = None,
-             with_session: bool = True) -> str:
-        env = {"BW_NOINTERACTIVE": "true"}
+             with_session: bool = True, extra_env: Optional[dict] = None) -> str:
+        extra = dict(extra_env or {})
         if with_session:
-            env["BW_SESSION"] = self._require_session()
-        import os
-        full_env = {**os.environ, **env}
+            extra["BW_SESSION"] = self._require_session()
+        env = _child_env(extra)
         try:
             proc = subprocess.run(
                 [self.bw, *args],
@@ -121,14 +141,16 @@ class BitwardenVault(VaultWriter):
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                env=full_env,
+                env=env,
             )
         except subprocess.TimeoutExpired as exc:
             raise VaultError(f"bw {args[0]} timed out after {self.timeout}s") from exc
         if proc.returncode != 0:
-            # Never echo stdin (could contain the password JSON).
+            # Never echo stdin (could contain the password JSON), and redact any
+            # secret-looking text bw may have written to stderr before surfacing.
             raise VaultError(
-                f"bw {args[0]} failed (exit {proc.returncode}): {proc.stderr.strip()}"
+                f"bw {args[0]} failed (exit {proc.returncode}): "
+                f"{_redact(proc.stderr.strip())}"
             )
         return proc.stdout.strip()
 
@@ -165,14 +187,12 @@ class BitwardenVault(VaultWriter):
         Avoids interactive email+password+2FA. Credentials are passed via env,
         never argv. After this you still must unlock() with the master password.
         """
-        import os
-        env = {**os.environ, "BW_NOINTERACTIVE": "true",
-               "BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret}
+        env = _child_env({"BW_CLIENTID": client_id, "BW_CLIENTSECRET": client_secret})
         proc = subprocess.run(
             [self.bw, "login", "--apikey"],
             capture_output=True, text=True, timeout=self.timeout, env=env)
         if proc.returncode != 0 and "already logged in" not in proc.stderr.lower():
-            raise VaultError(f"Bitwarden API-key login failed: {proc.stderr.strip()}")
+            raise VaultError(f"Bitwarden API-key login failed: {_redact(proc.stderr.strip())}")
 
     # --- session management -------------------------------------------------
     @_serialized
@@ -224,8 +244,7 @@ class BitwardenVault(VaultWriter):
             self.store.set(self.store.bitwarden_account_key(), email)
 
     def _unlock_stdin(self, master_password: str) -> str:
-        import os
-        env = {**os.environ, "BW_NOINTERACTIVE": "true"}
+        env = _child_env()
         proc = subprocess.run(
             [self.bw, "unlock", "--raw"],
             input=master_password + "\n",
@@ -269,8 +288,10 @@ class BitwardenVault(VaultWriter):
         # Create it.
         template = json.loads(self._run(["get", "template", "folder"]))
         template["name"] = self.folder_name
-        encoded = self._encode(template)
-        created = json.loads(self._run(["create", "folder", encoded]))
+        # Pass the encoded item via STDIN, never argv — argv is world-visible via
+        # `ps`/proc, and the encoded JSON contains item data.
+        created = json.loads(self._run(["create", "folder"],
+                                       stdin=self._encode(template)))
         self._folder_id = created["id"]
         return self._folder_id
 
@@ -334,8 +355,10 @@ class BitwardenVault(VaultWriter):
             existing["notes"] = (cred.notes or existing.get("notes") or "")
             self._set_field(existing, "rphe_status", status)
             self._set_field(existing, "rphe_rotated_at", now)
-            out = json.loads(self._run(["edit", "item", existing["id"],
-                                        self._encode(existing)]))
+            # Encoded item (contains the new plaintext password) goes via STDIN,
+            # never argv.
+            out = json.loads(self._run(["edit", "item", existing["id"]],
+                                       stdin=self._encode(existing)))
         else:
             template = json.loads(self._run(["get", "template", "item"]))
             template.update({
@@ -353,7 +376,8 @@ class BitwardenVault(VaultWriter):
                     {"name": "rphe_rotated_at", "value": now, "type": 0},
                 ],
             })
-            out = json.loads(self._run(["create", "item", self._encode(template)]))
+            out = json.loads(self._run(["create", "item"],
+                                       stdin=self._encode(template)))
 
         self._run(["sync"])  # converge other devices
         login = out.get("login") or {}
@@ -372,7 +396,7 @@ class BitwardenVault(VaultWriter):
     def set_status(self, item_id: str, status: str) -> None:
         item = json.loads(self._run(["get", "item", item_id]))
         self._set_field(item, "rphe_status", status)
-        self._run(["edit", "item", item_id, self._encode(item)])
+        self._run(["edit", "item", item_id], stdin=self._encode(item))
         self._run(["sync"])
 
     @_serialized
@@ -392,7 +416,7 @@ class BitwardenVault(VaultWriter):
         login["password"] = prev
         login["passwordHistory"] = history[1:]
         self._set_field(item, "rphe_status", "reverted")
-        self._run(["edit", "item", item_id, self._encode(item)])
+        self._run(["edit", "item", item_id], stdin=self._encode(item))
         self._run(["sync"])
         return True
 

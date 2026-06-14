@@ -22,7 +22,21 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from urllib.parse import urlparse
+
+from ..linksafety import registrable_domain
 from ..models import BreachSignal, GeneratedCredential
+
+
+def _same_registrable_site(expected_url: str, landed_url: str) -> bool:
+    """True only if both URLs share a non-empty registrable domain.
+
+    Used to detect a reset link that 302/open-redirected somewhere else before
+    we autofill the new password. Errs toward False (refuse) on anything unclear.
+    """
+    expected = registrable_domain(urlparse(expected_url or "").hostname or "")
+    landed = registrable_domain(urlparse(landed_url or "").hostname or "")
+    return bool(expected) and expected == landed
 
 
 @dataclass
@@ -136,6 +150,31 @@ class ResetOrchestrator:
             page = context.new_page()
             page.set_default_timeout(self.nav_timeout_ms)
             page.goto(plan.reset_url, wait_until="domcontentloaded")
+
+            # Re-verify the landing host BEFORE typing the new password. The link
+            # we vetted can 302 / open-redirect to somewhere else; if the page we
+            # actually ended up on isn't the same registrable domain we trusted,
+            # refuse to autofill so the new password is never handed to a
+            # redirected phishing page. The human can still type it manually.
+            expected = registrable_domain(urlparse(plan.reset_url).hostname or "")
+            landed = registrable_domain(urlparse(page.url).hostname or "")
+            if not _same_registrable_site(plan.reset_url, page.url):
+                print("\n>>> ⚠ STOPPED: the reset page redirected from "
+                      f"'{expected or '?'}' to '{landed or '?'}'.")
+                print(">>> RPHE did NOT type your new password (possible phishing "
+                      "redirect). Check the address bar; if it's genuinely the "
+                      "right site, paste the password yourself.")
+                try:
+                    page.wait_for_event("close", timeout=0)
+                except Exception:
+                    pass
+                for closer in (context.close, browser.close):
+                    try:
+                        closer()
+                    except Exception:
+                        pass
+                return (f"halted: reset link redirected off '{expected or '?'}' "
+                        f"to '{landed or '?'}'; nothing was filled")
 
             # Best-effort: fill inputs that look like "new password" + "confirm".
             selectors = [
