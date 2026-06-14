@@ -709,8 +709,19 @@ class RpheApp(ctk.CTk if ctk else object):
     def _page_settings(self, page):
         self._h1(page, "Settings").grid(row=0, column=0, sticky="w")
 
+        diag = self._card(page)
+        diag.grid(row=1, column=0, sticky="ew", pady=(14, 12))
+        diag.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(diag, text="🩺  Test my setup", font=ctk.CTkFont(size=16, weight="bold"),
+                     anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 2))
+        self._muted(diag, "Check every connection — email, Bitwarden, breach database, "
+                    "NordPass — and see exactly what's working before you rely on it.",
+                    wrap=520).grid(row=1, column=0, sticky="w", padx=16)
+        ctk.CTkButton(diag, text="Run diagnostics", command=self.on_diagnose).grid(
+            row=2, column=0, sticky="w", padx=16, pady=(8, 14))
+
         sec = self._card(page)
-        sec.grid(row=1, column=0, sticky="ew", pady=(14, 12))
+        sec.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         ctk.CTkLabel(sec, text="🔒  Security", font=ctk.CTkFont(size=16, weight="bold"),
                      anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
         row = ctk.CTkFrame(sec, fg_color="transparent"); row.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 14))
@@ -722,7 +733,7 @@ class RpheApp(ctk.CTk if ctk else object):
         ctk.CTkButton(row, text="Save", width=70, command=self.on_save_security).pack(side="left", padx=12)
 
         sch = self._card(page)
-        sch.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        sch.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         ctk.CTkLabel(sch, text="⏰  Scheduled background scan",
                      font=ctk.CTkFont(size=16, weight="bold"), anchor="w").grid(
             row=0, column=0, sticky="w", padx=16, pady=(14, 6))
@@ -738,7 +749,7 @@ class RpheApp(ctk.CTk if ctk else object):
                       command=self.on_sched_uninstall).pack(side="left", padx=4)
 
         misc = self._card(page)
-        misc.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        misc.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         ctk.CTkLabel(misc, text="ℹ️  About & logs", font=ctk.CTkFont(size=16, weight="bold"),
                      anchor="w").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
         mrow = ctk.CTkFrame(misc, fg_color="transparent"); mrow.grid(row=1, column=0, sticky="w", padx=16, pady=(0, 14))
@@ -1105,6 +1116,36 @@ class RpheApp(ctk.CTk if ctk else object):
                     "Secrets live only in your OS keychain; passwords are never logged "
                     "or sent to any third party.")
         self._async(gather, lambda t: self._show_text("About RPHE", t), "Gathering info…")
+
+    def on_diagnose(self):
+        self._async(self.engine.diagnose, self._show_diagnostics,
+                    "Testing your setup…", key="diagnose")
+
+    def _show_diagnostics(self, checks):
+        top = ctk.CTkToplevel(self)
+        top.title("Setup diagnostics")
+        top.geometry("560x440")
+        top.after(60, top.lift)
+        frame = ctk.CTkScrollableFrame(top, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=14, pady=14)
+        frame.grid_columnconfigure(1, weight=1)
+        n_ok = sum(1 for c in checks if c["ok"])
+        ctk.CTkLabel(frame, text=f"{n_ok}/{len(checks)} checks passed",
+                     font=ctk.CTkFont(size=16, weight="bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        for i, c in enumerate(checks, start=1):
+            ctk.CTkLabel(frame, text=("✓" if c["ok"] else "✗"), width=22,
+                         text_color=(GREEN if c["ok"] else RED),
+                         font=ctk.CTkFont(size=16, weight="bold")).grid(
+                row=i, column=0, sticky="nw", pady=5)
+            box = ctk.CTkFrame(frame, fg_color="transparent")
+            box.grid(row=i, column=1, sticky="ew", padx=6, pady=5)
+            ctk.CTkLabel(box, text=c["name"], font=ctk.CTkFont(size=13, weight="bold"),
+                         anchor="w").pack(anchor="w")
+            ctk.CTkLabel(box, text=c["detail"], font=ctk.CTkFont(size=12),
+                         text_color=(MUTED if c["ok"] else RED), anchor="w",
+                         wraplength=440, justify="left").pack(anchor="w")
+        self.status.configure(text=f"Diagnostics: {n_ok}/{len(checks)} OK.")
 
     def on_lock(self):
         self._async(self.engine.lock_bitwarden, lambda _: (self.refresh_status(),

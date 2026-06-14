@@ -32,6 +32,11 @@ class Scanner(abc.ABC):
     def fetch(self) -> Iterator[dict]:
         ...
 
+    def check(self) -> str:
+        """Lightweight connectivity/auth check for diagnostics. Raises on failure,
+        returns a short OK detail. Overridden per provider."""
+        raise NotImplementedError(f"no check for provider {self.account.provider}")
+
     def since_date(self) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=self.account.lookback_days)
 

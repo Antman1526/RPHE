@@ -2,6 +2,7 @@
 
 Commands:
   rphe gui                        Launch the desktop GUI (same engine as the CLI).
+  rphe doctor                     Test every connection and report what works.
   rphe init                       Write a starter config file.
   rphe demo                       Run the classifier on built-in sample emails.
   rphe breach                     Check accounts against Have I Been Pwned.
@@ -620,6 +621,24 @@ def gui():
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(1)
     launch()
+
+
+@app.command()
+def doctor():
+    """Test every connection (email, Bitwarden, breach DB, NordPass) and report."""
+    from .engine import Engine
+    cfg, store, audit = _ctx()
+    console.print("[dim]Testing your setup…[/]")
+    checks = Engine(cfg, store, audit).diagnose()
+    table = Table(title="Setup diagnostics")
+    table.add_column(""); table.add_column("Check"); table.add_column("Detail", overflow="fold")
+    for c in checks:
+        table.add_row("[green]✓[/]" if c["ok"] else "[red]✗[/]", c["name"], c["detail"])
+    console.print(table)
+    n_ok = sum(1 for c in checks if c["ok"])
+    console.print(f"[bold]{n_ok}/{len(checks)} checks passed.[/]")
+    if n_ok < len(checks):
+        raise typer.Exit(1)
 
 
 @app.command()

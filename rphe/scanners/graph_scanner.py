@@ -24,6 +24,10 @@ SCOPES = ["Mail.Read"]
 
 
 class GraphScanner(Scanner):
+    def check(self) -> str:
+        self._token()       # raises if the cached token is missing/invalid
+        return "Microsoft Graph token OK"
+
     def _token(self) -> str:
         try:
             import msal

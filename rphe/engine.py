@@ -251,6 +251,66 @@ class Engine:
     def passkey_advice(self, service_name: str, domain: str) -> PasskeyAdvice:
         return advise(service_name, domain)
 
+    # --- setup diagnostics ("Test my setup" / `rphe doctor`) ----------------
+    def diagnose(self) -> list:
+        """Probe every integration and return a list of {name, ok, detail}.
+        Does real network/subprocess work — run it off the UI thread.
+        """
+        import keyring
+
+        from .scanners import build_scanner
+        checks = []
+
+        try:
+            checks.append({"name": "OS keychain", "ok": True,
+                           "detail": keyring.get_keyring().__class__.__name__})
+        except Exception as exc:
+            checks.append({"name": "OS keychain", "ok": False, "detail": str(exc)[:140]})
+
+        st = self.bitwarden_status()
+        s = st.get("status", "unknown")
+        detail = {"missing-cli": "Bitwarden CLI not found",
+                  "unauthenticated": "not signed in",
+                  "locked": "signed in (locked — unlock to use)",
+                  "unlocked": f"unlocked ✓ {st.get('userEmail', '')}".strip()}.get(s, s)
+        checks.append({"name": "Bitwarden", "ok": s in ("unlocked", "locked"), "detail": detail})
+
+        if not self.cfg.accounts:
+            checks.append({"name": "Email", "ok": False, "detail": "no inbox configured yet"})
+        for a in self.cfg.accounts:
+            try:
+                checks.append({"name": f"Email · {a.label}", "ok": True,
+                               "detail": build_scanner(a, self.store).check()})
+            except Exception as exc:
+                checks.append({"name": f"Email · {a.label}", "ok": False, "detail": str(exc)[:140]})
+
+        try:
+            checker = self.breach_checker()
+            checker.pwned_password_count("password")   # free; verifies HIBP reachability
+            if self.store.get(self.store.hibp_api_key()):
+                checker.account_breaches("account-exists@hibp-integration-tests.com")
+                checks.append({"name": "Breach DB (HIBP)", "ok": True,
+                               "detail": "reachable, API key valid"})
+            else:
+                checks.append({"name": "Breach DB (HIBP)", "ok": True,
+                               "detail": "reachable (no key — email lookups disabled)"})
+        except Exception as exc:
+            checks.append({"name": "Breach DB (HIBP)", "ok": False, "detail": str(exc)[:140]})
+
+        try:
+            p = self.cfg.resolved_nordpass_export
+            p.parent.mkdir(parents=True, exist_ok=True)
+            t = p.parent / ".rphe_write_test"
+            t.write_text("ok")
+            t.unlink()
+            checks.append({"name": "NordPass CSV path", "ok": True, "detail": str(p.parent)})
+        except Exception as exc:
+            checks.append({"name": "NordPass CSV path", "ok": False, "detail": str(exc)[:140]})
+
+        self.audit.event("diagnose",
+                         results=[{"name": c["name"], "ok": c["ok"]} for c in checks])
+        return checks
+
     # --- setup helpers (used by the GUI Settings screen) -------------------
     def save(self, cfg: Optional[Config] = None) -> None:
         """Persist config to disk and adopt it as the live config."""

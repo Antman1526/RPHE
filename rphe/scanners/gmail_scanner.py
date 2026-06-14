@@ -56,6 +56,10 @@ class GmailScanner(Scanner):
             )
         return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
+    def check(self) -> str:
+        info = self.profile()
+        return f"Gmail API OK ({info.get('emailAddress')})"
+
     def profile(self) -> dict:
         """Validate the stored token and return safe identity info.
 

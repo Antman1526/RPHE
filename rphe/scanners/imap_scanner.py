@@ -23,6 +23,24 @@ from .base import Scanner, decode_mime_header, message_to_text
 
 
 class ImapScanner(Scanner):
+    def check(self) -> str:
+        """Verify we can log in and open INBOX (no fetch). Raises on failure."""
+        if not self.account.imap_host:
+            raise ValueError("no IMAP host configured")
+        app_password = self.store.require(self.store.imap_password_key(self.account.label))
+        conn = imaplib.IMAP4_SSL(self.account.imap_host, self.account.imap_port)
+        try:
+            conn.login(self.account.address, app_password)
+            status, _ = conn.select('"INBOX"', readonly=True)
+            if status != "OK":
+                raise RuntimeError("logged in but couldn't open INBOX")
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+        return f"IMAP {self.account.imap_host} OK"
+
     def _decode(self, value: str | None) -> str:
         return decode_mime_header(value)
 

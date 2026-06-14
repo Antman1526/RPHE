@@ -27,6 +27,13 @@ from .base import Scanner, decode_mime_header, message_to_text
 
 
 class EmlScanner(Scanner):
+    def check(self) -> str:
+        from pathlib import Path
+        for folder in self.account.folders:
+            if not Path(folder).expanduser().exists():
+                raise FileNotFoundError(f"folder not found: {folder}")
+        return "eml folders present"
+
     def fetch(self) -> Iterator[dict]:
         for folder in self.account.folders:
             base = Path(folder).expanduser()
