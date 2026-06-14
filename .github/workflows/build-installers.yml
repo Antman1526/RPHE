@@ -60,7 +60,7 @@ jobs:
           path: dist/RPHE.dmg
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/RPHE.dmg
 
@@ -93,7 +93,7 @@ jobs:
           path: dist/RPHE.exe
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/RPHE.exe
 
@@ -113,6 +113,6 @@ jobs:
           sha256sum RPHE-macos-dmg/RPHE.dmg RPHE-windows-exe/RPHE.exe \
             | sed 's#RPHE-macos-dmg/##; s#RPHE-windows-exe/##' > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/SHA256SUMS.txt
