@@ -922,13 +922,18 @@ class RpheApp(ctk.CTk if ctk else object):
             self.show_page("connect")
             return
 
-        def done(signals):
+        def done(result):
+            signals, errors = result
             self.signals = signals
             self._scanned = True
             self._render_findings(signals)
-            self.status.configure(text=f"Scan complete — {len(signals)} account(s) flagged.")
-        self._async(lambda: self.engine.scan(Severity.MEDIUM), done, "Scanning inboxes…",
-                    key="scan")
+            msg = f"Scan complete — {len(signals)} account(s) flagged."
+            if errors:
+                labels = ", ".join(e["label"] for e in errors)
+                msg += f"   ⚠ couldn't check {len(errors)} inbox(es): {labels} — see Connect."
+            self.status.configure(text=msg)
+        self._async(lambda: self.engine.scan_detailed(Severity.MEDIUM), done,
+                    "Scanning inboxes…", key="scan")
 
     def on_breach_report(self):
         emails = sorted({a.address for a in self.engine.cfg.accounts if a.address})

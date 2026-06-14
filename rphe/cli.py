@@ -567,17 +567,23 @@ def scan_notify():
     eng = Engine(cfg, store, audit)
     threshold = Severity.from_name(cfg.notify_min_severity)
     try:
-        signals = eng.scan(threshold)
+        signals, errors = eng.scan_detailed(threshold)
     except Exception as exc:
         audit.event("scan_notify.error", detail=str(exc))
         console.print(f"[red]scan failed: {exc}[/]")
         raise typer.Exit(1)
+    # A scheduled scan that couldn't reach an inbox must NOT look like "all clear".
+    if errors:
+        labels = ", ".join(e["label"] for e in errors)
+        desktop_notify("RPHE — couldn't check your email",
+                       f"{len(errors)} inbox(es) failed ({labels}). Reconnect in RPHE.")
+        console.print(f"[yellow]{len(errors)} inbox(es) failed: {labels}[/]")
     if signals:
         services = sorted({s.service_name for s in signals})
         desktop_notify("RPHE — accounts may be at risk",
                        f"{len(signals)} flagged: {', '.join(services[:5])}")
         console.print(f"{len(signals)} flagged; desktop notification sent.")
-    else:
+    elif not errors:
         console.print("Nothing flagged.")
 
 

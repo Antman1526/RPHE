@@ -86,20 +86,29 @@ class Engine:
             self.audit.event("bitwarden.lock", result="error", detail=str(exc))
 
     # --- email scan ---------------------------------------------------------
-    def scan(self, min_severity: Severity = Severity.MEDIUM) -> list:
+    def scan_detailed(self, min_severity: Severity = Severity.MEDIUM):
+        """Scan all inboxes. Returns (signals, errors) where errors is a list of
+        {label, error} for inboxes that couldn't be checked — so a silent failure
+        isn't mistaken for 'all clear'.
+        """
         from .scanners import build_scanner
         raw: list[dict] = []
+        errors: list[dict] = []
         for account in self.cfg.accounts:
             try:
                 for msg in build_scanner(account, self.store).fetch():
                     raw.append(msg)
             except Exception as exc:
+                errors.append({"label": account.label, "error": str(exc)})
                 self.audit.event("scan.account_error", account=account.label,
                                  detail=str(exc))
         signals = [s for s in classify_many(raw) if s.severity >= min_severity]
-        self.audit.event("scan", flagged=len(signals),
+        self.audit.event("scan", flagged=len(signals), errors=len(errors),
                          signals=[s.to_audit_dict() for s in signals])
-        return signals
+        return signals, errors
+
+    def scan(self, min_severity: Severity = Severity.MEDIUM) -> list:
+        return self.scan_detailed(min_severity)[0]
 
     # --- breach detection ---------------------------------------------------
     def vault_accounts(self) -> list:
