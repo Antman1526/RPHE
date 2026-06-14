@@ -942,6 +942,23 @@ class RpheApp(ctk.CTk if ctk else object):
     def on_rotate(self, signal):
         RotateDialog(self, self.engine, signal)
 
+    def _rotate_vault_finding(self, f):
+        # Turn a vault-audit finding (exposed/weak/reused password) into a
+        # rotation: build a minimal signal and open the same Rotate flow.
+        from datetime import datetime, timezone
+        from urllib.parse import urlparse
+
+        from .models import BreachSignal, Severity, SignalKind
+        host = (urlparse(f["url"]).hostname or "") if f.get("url") else ""
+        sig = BreachSignal(
+            message_id="vault:" + (f.get("item_id") or f["name"]),
+            service_name=f["name"], sender_domain=host, subject="",
+            received_at=datetime.now(timezone.utc),
+            kind=SignalKind.DATA_LEAK, severity=Severity.HIGH, reset_url=None,
+            account_hint=f.get("username") or "",
+            rationale="vault audit: " + ", ".join(f.get("issues", [])), raw_snippet="")
+        RotateDialog(self, self.engine, sig)
+
     def on_pending(self):
         PendingDialog(self, self.engine)
 
@@ -960,9 +977,13 @@ class RpheApp(ctk.CTk if ctk else object):
                     row=1, column=0, sticky="w", padx=16, pady=(0, 12))
             for i, f in enumerate(report["findings"], start=1):
                 c = self._card(self.health_area); c.grid(row=i, column=0, sticky="ew", pady=4)
+                c.grid_columnconfigure(0, weight=1)
                 ctk.CTkLabel(c, text=f"{f['name']}  ·  {f['username']}",
                              font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
                     row=0, column=0, sticky="w", padx=14, pady=(10, 0))
+                ctk.CTkButton(c, text="Rotate…", width=90,
+                              command=lambda fi=f: self._rotate_vault_finding(fi)).grid(
+                    row=0, column=1, rowspan=2, padx=12)
                 bf = ctk.CTkFrame(c, fg_color="transparent"); bf.grid(row=1, column=0, sticky="w", padx=10, pady=(2, 10))
                 for issue in f["issues"]:
                     col = RED if "breached" in issue else (AMBER if "weak" in issue else ("#7c3aed", "#a78bfa"))

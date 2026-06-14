@@ -238,7 +238,8 @@ class Engine:
                 issues.append(f"weak (~{bits:.0f} bits)")
             if issues:
                 findings.append({"name": l["name"], "username": l["username"],
-                                 "item_id": l["item_id"], "issues": issues})
+                                 "item_id": l["item_id"], "url": l.get("url"),
+                                 "issues": issues})
         self.audit.event("vault.audit", scanned=len(logins), flagged=len(findings))
         return {"scanned": len(logins), "findings": findings}
 
