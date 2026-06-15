@@ -45,6 +45,12 @@ RED = ("#dc2626", "#ef4444")
 GREY = ("#9aa3af", "#5b6068")
 SEV_COLOR = {"CRITICAL": RED, "HIGH": AMBER, "MEDIUM": ("#ca8a04", "#eab308"),
              "LOW": ("#2563eb", "#3b82f6"), "INFO": GREY}
+# Soft (light, dark) fills behind tier avatars and chips — calm, not loud.
+SEV_TINT = {"CRITICAL": ("#fde8e8", "#3a1d1d"), "HIGH": ("#fdeede", "#3a2e18"),
+            "MEDIUM": ("#fbf0d4", "#36300f"), "LOW": ("#e6effd", "#1b2a40")}
+CHIP_TINT = {"ok": ("#e7f6ec", "#16321f"), "warn": ("#fdeede", "#3a2e18"),
+             "muted": ("#eef0f3", "#26262c")}
+CHIP_TEXT = {"ok": GREEN, "warn": AMBER, "muted": MUTED}
 
 NAV = [
     ("dashboard", "🏠  Dashboard"),
@@ -354,49 +360,218 @@ class RpheApp(ctk.CTk if ctk else object):
         self.risk_body = ctk.CTkFrame(page, fg_color="transparent")
         self.risk_body.grid(row=3, column=0, sticky="ew", pady=(14, 0))
         self.risk_body.grid_columnconfigure(0, weight=1)
-        # Render the cached snapshot instantly (no I/O on the worst path; may be None).
-        self._render_risk(self.engine.build_dashboard(refresh=False))
+        self._risk_show_low = False
+        self._risk_payload = None
+        # Load the cached snapshot + any pending rotations off the UI thread (the
+        # file load is instant but list_pending may touch the vault).
+        self._async(lambda: (self.engine.build_dashboard(refresh=False),
+                             self._safe_pending()),
+                    self._render_risk, "Loading risk dashboard…", key="risk_load")
 
     def on_risk_refresh(self):
-        self._async(lambda: self.engine.build_dashboard(refresh=True), self._render_risk,
-                    "Refreshing risk dashboard…", key="risk_refresh")
+        self._async(lambda: (self.engine.build_dashboard(refresh=True),
+                             self._safe_pending()),
+                    self._render_risk, "Refreshing risk dashboard…", key="risk_refresh")
 
-    def _render_risk(self, snap):
+    def _safe_pending(self):
+        """Pending rotations, or [] if the vault is locked/unavailable."""
+        try:
+            return self.engine.list_pending()
+        except Exception:
+            return []
+
+    def _toggle_low(self):
+        self._risk_show_low = not self._risk_show_low
+        self._render_risk(self._risk_payload)
+
+    # ---- Risk tab sub-widgets ---------------------------------------------
+    def _chip(self, parent, text, kind):
+        return ctk.CTkLabel(parent, text=text, fg_color=CHIP_TINT[kind],
+                            text_color=CHIP_TEXT[kind], corner_radius=11,
+                            font=ctk.CTkFont(size=11), padx=12, pady=4)
+
+    def _metric_card(self, parent, label, count, sev):
+        c = ctk.CTkFrame(parent, fg_color=("#f4f5f7", "#1a1a1e"), corner_radius=10)
+        top = ctk.CTkFrame(c, fg_color="transparent")
+        top.pack(anchor="w", padx=14, pady=(12, 0))
+        ctk.CTkLabel(top, text="●", text_color=SEV_COLOR[sev],
+                     font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(top, text=label, text_color=MUTED,
+                     font=ctk.CTkFont(size=13)).pack(side="left")
+        ctk.CTkLabel(c, text=str(count), font=ctk.CTkFont(size=26, weight="bold"),
+                     anchor="w").pack(anchor="w", padx=14, pady=(2, 12))
+        return c
+
+    def _avatar(self, parent, letter, sev):
+        return ctk.CTkLabel(parent, text=letter.upper() or "?", width=34, height=34,
+                            corner_radius=8, fg_color=SEV_TINT.get(sev, GREY),
+                            text_color=SEV_COLOR.get(sev, MUTED),
+                            font=ctk.CTkFont(size=15, weight="bold"))
+
+    def _render_risk(self, payload):
+        self._risk_payload = payload
+        snap, pending = payload if isinstance(payload, tuple) else (payload, [])
         for w in self.risk_body.winfo_children():
             w.destroy()
+        # The load/refresh finished — don't leave the status stuck on "Loading…".
+        self.status.configure(text="Ready.")
         if snap is None:
             self._muted(self.risk_body, "No data yet — click Refresh to run your "
                         "first scan.").grid(row=0, column=0, sticky="w", pady=4)
             return
+        r = 0
+
+        # Source-freshness chips — honest about what could and couldn't be checked.
+        chips = ctk.CTkFrame(self.risk_body, fg_color="transparent")
+        chips.grid(row=r, column=0, sticky="w", pady=(0, 10)); r += 1
+        for text, kind in self._risk_source_chips(snap.sources):
+            self._chip(chips, text, kind).pack(side="left", padx=(0, 8))
+
         ctk.CTkLabel(self.risk_body, text=f"as of {snap.generated_at}", text_color=MUTED,
                      font=ctk.CTkFont(size=11), anchor="w").grid(
-            row=0, column=0, sticky="w", pady=(0, 6))
-        colors = {"CRITICAL": RED, "HIGH": AMBER, "MEDIUM": ACCENT_BG, "LOW": GREEN}
-        r = 1
+            row=r, column=0, sticky="w", pady=(0, 8)); r += 1
+
+        # Tier-count summary cards.
+        counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for acc in snap.accounts:
-            if acc.tier.name == "LOW":
+            counts[acc.tier.name] = counts.get(acc.tier.name, 0) + 1
+        cards = ctk.CTkFrame(self.risk_body, fg_color="transparent")
+        cards.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+        for i, sev in enumerate(("CRITICAL", "HIGH", "MEDIUM")):
+            cards.grid_columnconfigure(i, weight=1, uniform="metric")
+            self._metric_card(cards, sev.capitalize(), counts[sev], sev).grid(
+                row=0, column=i, sticky="ew", padx=(0 if i == 0 else 12, 0))
+
+        # Awaiting-confirmation (pending rotations) — its own section.
+        if pending:
+            self._risk_section_header(self.risk_body, r, "Awaiting confirmation",
+                                      len(pending), GREY); r += 1
+            wrap = ctk.CTkFrame(self.risk_body, fg_color="transparent")
+            wrap.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+            wrap.grid_columnconfigure(0, weight=1)
+            for i, item in enumerate(pending):
+                self._risk_pending_card(wrap, item, i)
+
+        # Risk rows, grouped Critical -> High -> Medium.
+        for sev in ("CRITICAL", "HIGH", "MEDIUM"):
+            group = [a for a in snap.accounts if a.tier.name == sev]
+            if not group:
                 continue
-            card = self._card(self.risk_body)
-            card.grid(row=r, column=0, sticky="ew", pady=4)
-            card.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(card, text="●", text_color=colors.get(acc.tier.name, GREY),
-                         font=ctk.CTkFont(size=18)).grid(row=0, column=0, padx=(14, 8), pady=12)
-            box = ctk.CTkFrame(card, fg_color="transparent")
-            box.grid(row=0, column=1, sticky="w")
-            who = acc.domain + (f"  ·  {acc.username}" if acc.username else "")
-            ctk.CTkLabel(box, text=who, font=ctk.CTkFont(size=14, weight="bold"),
-                         anchor="w").pack(anchor="w")
-            ctk.CTkLabel(box, text="; ".join(acc.reasons), text_color=MUTED,
-                         font=ctk.CTkFont(size=12), anchor="w", justify="left",
-                         wraplength=460).pack(anchor="w")
-            label = "Rotate" if acc.managed else "Add to vault"
-            ctk.CTkButton(card, text=label, width=120,
-                          command=lambda a=acc: self._rotate_risk_row(a)).grid(
-                row=0, column=2, padx=14)
-            r += 1
-        if r == 1:
+            self._risk_section_header(self.risk_body, r, sev.capitalize(),
+                                      len(group), SEV_COLOR[sev]); r += 1
+            wrap = ctk.CTkFrame(self.risk_body, fg_color="transparent")
+            wrap.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+            wrap.grid_columnconfigure(0, weight=1)
+            for i, acc in enumerate(group):
+                self._risk_account_card(wrap, acc, i)
+
+        # Low-risk collapse.
+        low = [a for a in snap.accounts if a.tier.name == "LOW"]
+        if self._risk_show_low and low:
+            self._risk_section_header(self.risk_body, r, "Low", len(low),
+                                      SEV_COLOR["LOW"]); r += 1
+            wrap = ctk.CTkFrame(self.risk_body, fg_color="transparent")
+            wrap.grid(row=r, column=0, sticky="ew", pady=(0, 16)); r += 1
+            wrap.grid_columnconfigure(0, weight=1)
+            for i, acc in enumerate(low):
+                self._risk_account_card(wrap, acc, i)
+        if low:
+            ctk.CTkButton(
+                self.risk_body, anchor="w", height=30, fg_color="transparent",
+                text_color=ACCENT_TEXT, hover_color=("#eef2ff", "#1d2540"),
+                text=(f"▾  Hide {len(low)} low-risk" if self._risk_show_low
+                      else f"▸  Show {len(low)} low-risk accounts"),
+                command=self._toggle_low).grid(row=r, column=0, sticky="w"); r += 1
+        elif not any(a.tier.name != "LOW" for a in snap.accounts) and not pending:
             self._muted(self.risk_body, "✅ Nothing above low risk right now.").grid(
-                row=1, column=0, sticky="w", pady=4)
+                row=r, column=0, sticky="w", pady=4)
+
+    def _risk_source_chips(self, sources: dict):
+        """(text, kind) chips describing per-source freshness/coverage."""
+        out = []
+        inbox = sources.get("inbox") or {}
+        if inbox:
+            if inbox.get("ok"):
+                out.append(("Inbox up to date", "ok"))
+            else:
+                n = len(inbox.get("errors") or [])
+                out.append((f"Inbox · {n} couldn't be checked" if n
+                            else "Inbox unavailable", "warn"))
+        vault = sources.get("vault") or {}
+        if vault:
+            out.append(("Vault checked", "ok") if vault.get("ok")
+                       else ("Vault locked — unlock for full coverage", "warn"))
+        breach = sources.get("breach_email") or {}
+        if breach:
+            out.append(("Breach checks ok", "ok") if breach.get("ok")
+                       else (f"Breach checks off — {breach.get('reason', 'unavailable')}",
+                             "muted"))
+        return out
+
+    def _risk_section_header(self, parent, row, label, count, color):
+        h = ctk.CTkFrame(parent, fg_color="transparent")
+        h.grid(row=row, column=0, sticky="w", pady=(0, 8))
+        ctk.CTkLabel(h, text="●", text_color=color,
+                     font=ctk.CTkFont(size=11)).pack(side="left", padx=(0, 7))
+        ctk.CTkLabel(h, text=label, font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=MUTED).pack(side="left")
+        ctk.CTkLabel(h, text=f"  {count}", font=ctk.CTkFont(size=12),
+                     text_color=GREY).pack(side="left")
+
+    def _risk_account_card(self, parent, acc, idx):
+        card = self._card(parent)
+        card.grid(row=idx, column=0, sticky="ew", pady=4)
+        card.grid_columnconfigure(1, weight=1)
+        self._avatar(card, (acc.domain or "?")[:1], acc.tier.name).grid(
+            row=0, column=0, padx=(12, 10), pady=12)
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.grid(row=0, column=1, sticky="w")
+        who = acc.domain + (f"   ·   {acc.username}" if acc.username else "")
+        line = ctk.CTkFrame(box, fg_color="transparent")
+        line.pack(anchor="w")
+        ctk.CTkLabel(line, text=who, font=ctk.CTkFont(size=14, weight="bold"),
+                     anchor="w").pack(side="left")
+        if not acc.managed:
+            ctk.CTkLabel(line, text="unmanaged", fg_color=CHIP_TINT["muted"],
+                         text_color=MUTED, corner_radius=9, padx=8, pady=1,
+                         font=ctk.CTkFont(size=10)).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(box, text="; ".join(acc.reasons), text_color=MUTED,
+                     font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                     wraplength=440).pack(anchor="w")
+        ctk.CTkButton(card, text="Rotate" if acc.managed else "Add to vault", width=120,
+                      command=lambda a=acc: self._rotate_risk_row(a)).grid(
+            row=0, column=2, padx=14)
+
+    def _risk_pending_card(self, parent, item, idx):
+        card = self._card(parent)
+        card.grid(row=idx, column=0, sticky="ew", pady=4)
+        card.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(card, text="◷", text_color=GREY,
+                     font=ctk.CTkFont(size=18)).grid(row=0, column=0, padx=(14, 8), pady=12)
+        box = ctk.CTkFrame(card, fg_color="transparent")
+        box.grid(row=0, column=1, sticky="w")
+        who = item.name + (f"   ·   {item.username}" if item.username else "")
+        ctk.CTkLabel(box, text=who, font=ctk.CTkFont(size=14, weight="bold"),
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(box, text="New password stored — confirm once you've reset it on "
+                     "the site.", text_color=MUTED, font=ctk.CTkFont(size=12),
+                     anchor="w", justify="left", wraplength=440).pack(anchor="w")
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=0, column=2, padx=12)
+        ctk.CTkButton(actions, text="Confirm", width=84,
+                      command=lambda i=item.item_id: self._pending_action("confirm", i)
+                      ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(actions, text="Revert", width=84, fg_color="transparent",
+                      border_width=1, text_color=("#1f2937", "#e5e7eb"),
+                      hover_color=("#e5e7eb", "#26262c"),
+                      command=lambda i=item.item_id: self._pending_action("revert", i)
+                      ).pack(side="left")
+
+    def _pending_action(self, action, item_id):
+        fn = (self.engine.confirm_rotation if action == "confirm"
+              else self.engine.revert_rotation)
+        self._async(lambda: fn(item_id), lambda res: self.on_risk_refresh(),
+                    f"{action.capitalize()}ing rotation…", key=f"pending_{item_id}")
 
     def _rotate_risk_row(self, acc):
         # No reusable "ensure unlocked" gate exists in the GUI — the Scan/rotate
