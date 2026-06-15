@@ -404,7 +404,8 @@ class RpheApp(ctk.CTk if ctk else object):
         # _poll_queue error path (which shows a messagebox). Mirror that here.
         self._async(lambda: self.engine.rotate_from_dashboard(acc),
                     lambda res: self.on_risk_refresh(),
-                    f"Rotating {acc.domain}…", key=f"rotate_{acc.domain}")
+                    f"Rotating {acc.domain}…",
+                    key=f"rotate_{acc.domain}_{acc.username}")
 
     # ---- Connect -----------------------------------------------------------
     def _page_connect(self, page):
