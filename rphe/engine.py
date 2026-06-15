@@ -207,6 +207,58 @@ class Engine:
         self.audit.event("rotation.revert", item_id=item_id, result="ok" if ok else "no-history")
         return ok
 
+    # --- risk dashboard -----------------------------------------------------
+    def build_dashboard(self, refresh: bool = False):
+        """Return a RiskSnapshot. refresh=False loads the cached snapshot (or
+        None if never run); refresh=True recomputes each source independently,
+        builds the risk model, persists, and returns it."""
+        from .risk import build_risk_model
+        from .snapshot import RiskSnapshot, load_snapshot, save_snapshot
+        if not refresh:
+            return load_snapshot(self.cfg.resolved_data_dir)
+
+        now = datetime.now(timezone.utc).isoformat()
+        sources: dict = {}
+
+        try:
+            signals, errors = self.scan_detailed()
+            sources["inbox"] = {"at": now, "ok": not errors, "errors": errors}
+        except Exception as exc:
+            signals = []
+            sources["inbox"] = {"at": now, "ok": False, "errors": [{"error": str(exc)}]}
+
+        vault_logins = []
+        try:
+            vault_logins = self.audit_vault().get("logins", [])
+            sources["vault"] = {"at": now, "ok": True}
+        except Exception as exc:
+            sources["vault"] = {"at": now, "ok": False, "reason": str(exc)}
+
+        breach_hits = []
+        if self.store.get(self.store.hibp_api_key()):
+            emails = sorted({l["username"] for l in vault_logins
+                             if l.get("username") and "@" in l["username"]}
+                            | {a.address for a in self.cfg.accounts if a.address})
+            try:
+                for st in self.check_accounts_breached(list(emails)):
+                    for dom in st.breach_domains:
+                        breach_hits.append({"email": st.username, "domain": dom,
+                                            "password_exposed": st.password_exposed})
+                sources["breach_email"] = {"at": now, "ok": True}
+            except Exception as exc:
+                sources["breach_email"] = {"at": now, "ok": False, "reason": str(exc)}
+        else:
+            sources["breach_email"] = {"at": now, "ok": False,
+                                       "reason": "no HIBP API key"}
+
+        accounts = build_risk_model(signals, vault_logins, breach_hits)
+        snap = RiskSnapshot(generated_at=now, sources=sources, accounts=accounts)
+        save_snapshot(self.cfg.resolved_data_dir, snap)
+        self.audit.event("dashboard.refresh",
+                         accounts=len(accounts),
+                         sources={k: v.get("ok") for k, v in sources.items()})
+        return snap
+
     # --- vault-wide audit (weak / reused / breached) -----------------------
     def audit_vault(self, check_pwned: bool = True, weak_below_bits: int = 60) -> dict:
         """Audit EVERY Bitwarden login for breached, reused and weak passwords.
