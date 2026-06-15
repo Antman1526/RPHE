@@ -604,6 +604,10 @@ def scan_notify():
         console.print(f"{len(signals)} flagged; desktop notification sent.")
     elif not errors:
         console.print("Nothing flagged.")
+    try:
+        eng.build_dashboard(refresh=True)   # keep the dashboard snapshot warm
+    except Exception:
+        pass                                # notification already handled above
 
 
 @schedule_app.command("install")
