@@ -63,3 +63,36 @@ def snapshot_from_dict(d: dict) -> RiskSnapshot:
         generated_at=d.get("generated_at", ""),
         sources=d.get("sources") or {},
         accounts=[_row_from_dict(r) for r in (d.get("accounts") or [])])
+
+
+def _path(data_dir) -> Path:
+    return Path(data_dir) / SNAPSHOT_NAME
+
+
+def save_snapshot(data_dir, snap: RiskSnapshot) -> Path:
+    """Atomically write the snapshot at 0600 (POSIX)."""
+    path = _path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    mode = 0o600 if sys.platform != "win32" else 0o666
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(snapshot_to_dict(snap), fh, ensure_ascii=False, indent=2)
+    if sys.platform != "win32":
+        os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return path
+
+
+def load_snapshot(data_dir) -> "RiskSnapshot | None":
+    """Load the snapshot, or None if absent/corrupt (treated as 'never run')."""
+    path = _path(data_dir)
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return snapshot_from_dict(json.load(fh))
+    except (json.JSONDecodeError, OSError, KeyError):
+        return None

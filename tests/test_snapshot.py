@@ -27,3 +27,26 @@ def test_serialized_dict_has_fingerprint_but_no_secret_keys():
     assert "password" not in d["accounts"][0]    # no plaintext field name
     assert "reset_url" not in d["accounts"][0]   # only reset_host is kept
     assert d["accounts"][0]["reset_host"] == "github.com"
+
+
+import sys
+import stat
+from rphe.snapshot import save_snapshot, load_snapshot
+
+
+def test_save_then_load_roundtrip(tmp_path):
+    save_snapshot(tmp_path, _snap())
+    back = load_snapshot(tmp_path)
+    assert back is not None and back.accounts[0].domain == "github.com"
+
+
+def test_missing_snapshot_loads_none(tmp_path):
+    assert load_snapshot(tmp_path) is None
+
+
+def test_saved_file_is_0600(tmp_path):
+    if sys.platform == "win32":
+        return
+    save_snapshot(tmp_path, _snap())
+    mode = stat.S_IMODE((tmp_path / "risk_snapshot.json").stat().st_mode)
+    assert mode == 0o600
