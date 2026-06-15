@@ -127,5 +127,28 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
             if row.managed and any("weak password" in x for x in row.reasons):
                 _bump(row, Tier.HIGH, "weak password with active exposure", "inbox")
 
+    # --- breach-email hits (only password-exposing ones) ---
+    for h in breach_hits:
+        if not h.get("password_exposed"):
+            continue
+        domain = registrable_domain(h.get("domain") or "")
+        email = h.get("email")
+        if not domain:
+            continue
+        k = _key(domain, email)
+        row = rows.get(k)
+        if row is None:
+            existing = _domain_rows(domain)
+            if existing:
+                for r in existing:
+                    _bump(r, Tier.CRITICAL,
+                          "email in a breach that exposed passwords", "breach_email")
+                continue
+            row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
+                              managed=False)
+            rows[k] = row
+        _bump(row, Tier.CRITICAL,
+              "email in a breach that exposed passwords", "breach_email")
+
     # ranking happens at render time; return worst-first for convenience
     return sorted(rows.values(), key=lambda r: (-int(r.tier), r.domain))

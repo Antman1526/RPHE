@@ -91,3 +91,30 @@ def test_trusted_reset_link_recorded_as_host_only():
     r = rows[0]
     assert r.reset_url_trusted is True and r.reset_host == "github.com"
     assert "SECRET" not in str(r.__dict__)     # token never retained
+
+
+def test_password_exposing_breach_is_critical_and_can_be_unmanaged():
+    rows = build_risk_model(
+        [], [],
+        [{"email": "me@x.com", "domain": "dropbox.com", "password_exposed": True}])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.domain == "dropbox.com" and r.username == "me@x.com"
+    assert r.tier is Tier.CRITICAL and r.managed is False
+    assert "breach_email" in r.sources
+    assert any("breach" in x for x in r.reasons)
+
+
+def test_non_password_breach_is_ignored():
+    rows = build_risk_model(
+        [], [],
+        [{"email": "me@x.com", "domain": "forum.com", "password_exposed": False}])
+    assert rows == []
+
+
+def test_breach_attaches_to_existing_vault_row():
+    rows = build_risk_model(
+        [], [_login("Dropbox", "me@x.com", "https://dropbox.com", "f")],
+        [{"email": "me@x.com", "domain": "dropbox.com", "password_exposed": True}])
+    assert len(rows) == 1 and rows[0].tier is Tier.CRITICAL
+    assert {"vault", "breach_email"} <= rows[0].sources
