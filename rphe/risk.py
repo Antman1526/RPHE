@@ -87,5 +87,45 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
         if bits is not None and bits < weak_below_bits:
             _bump(row, Tier.MEDIUM, f"weak password (~{bits:.0f} bits)", "vault")
 
+    _SEV_TO_TIER = {
+        Severity.CRITICAL: Tier.CRITICAL,
+        Severity.HIGH: Tier.HIGH,
+        Severity.MEDIUM: Tier.MEDIUM,
+        Severity.LOW: Tier.LOW,
+        Severity.INFO: Tier.LOW,
+    }
+
+    def _domain_rows(domain: str):
+        return [r for (d, _u), r in rows.items() if d == domain]
+
+    # --- inbox signals merge onto / create rows ---
+    for s in scan_signals:
+        domain = registrable_domain(s.sender_domain or "")
+        if not domain:
+            continue
+        tier = _SEV_TO_TIER.get(s.severity, Tier.LOW)
+        reason = (s.kind.value.replace("_", " ") + " email").capitalize()
+        targets = []
+        if s.account_hint:
+            k = _key(domain, s.account_hint)
+            if k in rows:
+                targets = [rows[k]]
+        if not targets:
+            targets = _domain_rows(domain)
+        if not targets:
+            k = _key(domain, s.account_hint)
+            row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
+                              managed=False)
+            rows[k] = row
+            targets = [row]
+        for row in targets:
+            _bump(row, tier, reason, "inbox")
+            if s.reset_url and s.reset_url_trusted and not row.reset_host:
+                row.reset_url_trusted = True
+                row.reset_host = registrable_domain(urlparse(s.reset_url).hostname or "")
+            # weak managed password + any exposure -> promote to HIGH
+            if row.managed and any("weak password" in x for x in row.reasons):
+                _bump(row, Tier.HIGH, "weak password with active exposure", "inbox")
+
     # ranking happens at render time; return worst-first for convenience
     return sorted(rows.values(), key=lambda r: (-int(r.tier), r.domain))

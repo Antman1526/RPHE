@@ -1,3 +1,4 @@
+from rphe.models import BreachSignal, Severity, SignalKind
 from rphe.risk import Tier, AccountRisk
 
 
@@ -49,3 +50,44 @@ def test_weak_password_alone_is_medium():
     rows = build_risk_model([], [_login("C", "me@x.com", "https://c.com", "f", bits=40.0)], [])
     assert rows[0].tier is Tier.MEDIUM
     assert any("weak" in r for r in rows[0].reasons)
+
+
+from datetime import datetime, timezone
+
+
+def _sig(service, sender_domain, kind, severity, hint=None, reset_url=None, trusted=True):
+    return BreachSignal(
+        message_id="m", service_name=service, sender_domain=sender_domain,
+        subject="x", received_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        kind=kind, severity=severity, reset_url=reset_url, account_hint=hint,
+        reset_url_trusted=trusted)
+
+
+def test_inbox_only_service_creates_unmanaged_row():
+    rows = build_risk_model(
+        [_sig("LinkedIn", "linkedin.com", SignalKind.BREACH_NOTICE, Severity.CRITICAL)],
+        [], [])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.domain == "linkedin.com" and r.managed is False
+    assert r.tier is Tier.CRITICAL and "inbox" in r.sources
+
+
+def test_domain_inbox_signal_attaches_to_matching_vault_login():
+    rows = build_risk_model(
+        [_sig("GitHub", "github.com", SignalKind.SUSPICIOUS_LOGIN, Severity.HIGH)],
+        [_login("GitHub", "me@x.com", "https://github.com", "f")], [])
+    assert len(rows) == 1                      # merged, not duplicated
+    r = rows[0]
+    assert r.managed is True and r.tier is Tier.HIGH
+    assert {"vault", "inbox"} <= r.sources
+
+
+def test_trusted_reset_link_recorded_as_host_only():
+    rows = build_risk_model(
+        [_sig("GitHub", "github.com", SignalKind.PASSWORD_RESET_PROMPT, Severity.MEDIUM,
+              reset_url="https://github.com/reset?token=SECRET", trusted=True)],
+        [], [])
+    r = rows[0]
+    assert r.reset_url_trusted is True and r.reset_host == "github.com"
+    assert "SECRET" not in str(r.__dict__)     # token never retained
