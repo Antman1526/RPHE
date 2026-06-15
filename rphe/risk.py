@@ -139,7 +139,8 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
                 row.reset_url_trusted = True
                 row.reset_host = registrable_domain(urlparse(s.reset_url).hostname or "")
             # weak managed password + any exposure -> promote to HIGH
-            if row.managed and any("weak password" in x for x in row.reasons):
+            if row.managed and any("weak password" in text
+                                   for (_t, text) in reason_pairs.get(id(row), [])):
                 _bump(row, Tier.HIGH, "weak password with active exposure", "inbox")
 
     # --- breach-email hits (only password-exposing ones) ---

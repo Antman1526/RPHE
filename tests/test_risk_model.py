@@ -100,6 +100,20 @@ def test_domain_inbox_signal_attaches_to_matching_vault_login():
     assert {"vault", "inbox"} <= r.sources
 
 
+def test_weak_managed_password_plus_inbox_alert_promotes_to_high():
+    # A weak managed login (MEDIUM on its own) plus any inbox exposure on the
+    # same account must promote to HIGH ("weak password combined with exposure").
+    rows = build_risk_model(
+        [_sig("X", "x.com", SignalKind.NEW_DEVICE_LOGIN, Severity.MEDIUM)],
+        [_login("X", "me@x.com", "https://x.com", "f", bits=40.0)],
+        [])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.tier is Tier.HIGH
+    assert any("weak password" in x for x in r.reasons)
+    assert any("weak password with active exposure" in x for x in r.reasons)
+
+
 def test_trusted_reset_link_recorded_as_host_only():
     rows = build_risk_model(
         [_sig("GitHub", "github.com", SignalKind.PASSWORD_RESET_PROMPT, Severity.MEDIUM,
