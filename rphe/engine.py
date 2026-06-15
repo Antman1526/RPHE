@@ -40,6 +40,7 @@ class AccountBreachStatus:
     breached: bool
     breach_titles: list
     breach_domains: list = None  # type: ignore[assignment]
+    password_exposed: bool = False
 
     def __post_init__(self):
         if self.breach_domains is None:
@@ -128,7 +129,9 @@ class Engine:
                 results.append(AccountBreachStatus(
                     name=email, username=email, breached=bool(breaches),
                     breach_titles=[b.title for b in breaches],
-                    breach_domains=[b.domain for b in breaches if b.domain]))
+                    breach_domains=[b.domain for b in breaches if b.domain],
+                    password_exposed=any("Passwords" in (b.data_classes or [])
+                                         for b in breaches)))
             except Exception as exc:
                 self.audit.event("breach.lookup_error", account=email,
                                  detail=str(exc))
@@ -228,23 +231,32 @@ class Engine:
 
         pwned_cache: dict[str, int] = {}
         findings = []
+        structured = []
         for l in logins:
             pw = l["password"]
             if not pw:
                 continue
             fp = hashlib.sha256(pw.encode()).hexdigest()
-            issues = []
+            pwned = 0
             if check_pwned:
                 if fp not in pwned_cache:
                     try:
                         pwned_cache[fp] = checker.pwned_password_count(pw)
                     except Exception:
                         pwned_cache[fp] = 0
-                if pwned_cache[fp] > 0:
-                    issues.append(f"breached×{pwned_cache[fp]}")
-            if len(by_fp.get(fp, [])) > 1:
-                issues.append("reused")
+                pwned = pwned_cache[fp]
+            reuse = len(by_fp.get(fp, []))
             bits = password_strength_bits(pw)
+            structured.append({                            # plaintext-free row
+                "name": l["name"], "username": l["username"],
+                "url": l.get("url"), "item_id": l["item_id"],
+                "fingerprint": fp[:8], "pwned_count": pwned,
+                "reuse_count": reuse, "weak_bits": float(bits)})
+            issues = []
+            if pwned > 0:
+                issues.append(f"breached×{pwned}")
+            if reuse > 1:
+                issues.append("reused")
             if bits < weak_below_bits:
                 issues.append(f"weak (~{bits:.0f} bits)")
             if issues:
@@ -252,7 +264,7 @@ class Engine:
                                  "item_id": l["item_id"], "url": l.get("url"),
                                  "issues": issues})
         self.audit.event("vault.audit", scanned=len(logins), flagged=len(findings))
-        return {"scanned": len(logins), "findings": findings}
+        return {"scanned": len(logins), "findings": findings, "logins": structured}
 
     # --- sync ---------------------------------------------------------------
     def sync_report(self):
