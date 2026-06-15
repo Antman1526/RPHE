@@ -87,6 +87,9 @@ pages that mirror the goal:
 - **Vault Health** — audit every stored password (weak/reused/breached) and keep
   NordPass in sync.
 
+- **Risk** — one prioritized, tiered view of every at-risk account (see
+  [Risk dashboard](#risk-dashboard) below).
+
 Plus light/dark/system theme, a progress indicator, and **auto-lock**. No YAML
 editing or CLI required.
 
@@ -123,6 +126,41 @@ quarantine xattr, and code-signing/notarization removes the issue entirely.
 > `lipo -thin arm64`, which can fail on a cold cache. `build_macos.sh` auto-picks
 > a suitable Python (override with `PYBIN=…`); CI uses an arm64-only Python. The
 > CLI needs no GUI libraries.
+
+---
+
+## Risk dashboard
+
+One prioritized place to answer "what should I fix first?" The dashboard merges
+three signals — **email-scan** findings, the **vault-hygiene audit**
+(weak/reused/breached), and **breach checks** — into a single row per account,
+sorted into four tiers (**Critical / High / Medium / Low**). Each row carries a
+plain-English **"why"** (e.g. *reused password, also seen in 2 breaches*) so the
+priority is never a mystery.
+
+**CLI:**
+
+```bash
+rphe dashboard                    # tiered view, low-risk rows hidden
+rphe dashboard --refresh          # recompute from the latest signals first
+rphe dashboard --all              # include low-risk rows too
+rphe dashboard --tier critical    # filter to one tier (critical|high|medium|low)
+rphe dashboard --json             # machine-readable output
+```
+
+**GUI — the "Risk" tab:** opens **instantly** from the last cached snapshot
+(with an **"as of" stamp** so you know how fresh it is), a **Refresh** button to
+recompute on demand, and a per-row **Rotate**. Rotation is **lockout-safe**: it
+generates a strong password, stores it in Bitwarden as **PENDING** with the old
+one kept, and guides you to complete the reset on the real site (the same
+PENDING → Confirm/Revert flow as `rphe rotate`).
+
+**Data — local, redacted snapshot:** results are cached as `risk_snapshot.json`
+in the app data dir, written `0600`. It stores only **derived risk metadata**
+plus the **8-character password fingerprint** — **never** plaintext passwords or
+tokened reset URLs (reason strings get the same redaction pass as the audit
+log). The scheduled `rphe scan-notify` keeps the snapshot warm, so the GUI tab
+is up to date without a manual refresh.
 
 ---
 
