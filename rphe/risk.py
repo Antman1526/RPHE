@@ -13,7 +13,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from .linksafety import registrable_domain
-from .models import BreachSignal, Severity, SignalKind
+from .models import Severity
 
 
 class Tier(enum.IntEnum):
@@ -24,13 +24,22 @@ class Tier(enum.IntEnum):
     CRITICAL = 3
 
 
+_SEV_TO_TIER = {
+    Severity.CRITICAL: Tier.CRITICAL,
+    Severity.HIGH: Tier.HIGH,
+    Severity.MEDIUM: Tier.MEDIUM,
+    Severity.LOW: Tier.LOW,
+    Severity.INFO: Tier.LOW,
+}
+
+
 @dataclass
 class AccountRisk:
     domain: str
     username: Optional[str]
     tier: Tier
-    reasons: list = field(default_factory=list)
-    sources: set = field(default_factory=set)
+    reasons: list[str] = field(default_factory=list)
+    sources: set[str] = field(default_factory=set)
     vault_item_id: Optional[str] = None
     password_fingerprint: Optional[str] = None
     managed: bool = False
@@ -57,43 +66,40 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
     breach_hits items:  {email, domain, password_exposed}
     """
     rows: dict[tuple, AccountRisk] = {}
+    # Per-row (tier, reason) accumulator, keyed by row identity. Reasons are
+    # rendered worst-tier-first at the end (the GUI uses reasons[0] as headline).
+    reason_pairs: dict[int, list[tuple[Tier, str]]] = {}
 
     def _bump(row: AccountRisk, tier: Tier, reason: str, source: str) -> None:
         row.tier = max(row.tier, tier)
-        if reason and reason not in row.reasons:
-            row.reasons.append(reason)
+        if reason:
+            pairs = reason_pairs.setdefault(id(row), [])
+            if reason not in (text for _t, text in pairs):
+                pairs.append((tier, reason))
         row.sources.add(source)
 
     # --- vault logins seed the rows ---
-    for l in vault_logins:
-        domain = _domain_of(l.get("url"), l.get("name", ""))
-        k = _key(domain, l.get("username"))
+    for login in vault_logins:
+        domain = _domain_of(login.get("url"), login.get("name", ""))
+        k = _key(domain, login.get("username"))
         row = rows.get(k)
         if row is None:
             row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
-                              vault_item_id=l.get("item_id"),
-                              password_fingerprint=l.get("fingerprint"),
+                              vault_item_id=login.get("item_id"),
+                              password_fingerprint=login.get("fingerprint"),
                               managed=True)
             rows[k] = row
         row.sources.add("vault")
-        if l.get("pwned_count", 0) > 0:
+        if login.get("pwned_count", 0) > 0:
             _bump(row, Tier.CRITICAL, "password found in breach corpus", "vault")
-        reuse = l.get("reuse_count", 1)
+        reuse = login.get("reuse_count", 1)
         if reuse >= 3:
             _bump(row, Tier.HIGH, f"reused on {reuse} sites", "vault")
         elif reuse == 2:
             _bump(row, Tier.MEDIUM, "reused on 2 sites", "vault")
-        bits = l.get("weak_bits")
+        bits = login.get("weak_bits")
         if bits is not None and bits < weak_below_bits:
             _bump(row, Tier.MEDIUM, f"weak password (~{bits:.0f} bits)", "vault")
-
-    _SEV_TO_TIER = {
-        Severity.CRITICAL: Tier.CRITICAL,
-        Severity.HIGH: Tier.HIGH,
-        Severity.MEDIUM: Tier.MEDIUM,
-        Severity.LOW: Tier.LOW,
-        Severity.INFO: Tier.LOW,
-    }
 
     def _domain_rows(domain: str):
         return [r for (d, _u), r in rows.items() if d == domain]
@@ -105,19 +111,26 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
             continue
         tier = _SEV_TO_TIER.get(s.severity, Tier.LOW)
         reason = (s.kind.value.replace("_", " ") + " email").capitalize()
-        targets = []
         if s.account_hint:
+            # A named account: target only that login. If it doesn't exist,
+            # create an unmanaged row for it rather than fanning out to siblings.
             k = _key(domain, s.account_hint)
-            if k in rows:
-                targets = [rows[k]]
-        if not targets:
-            targets = _domain_rows(domain)
-        if not targets:
-            k = _key(domain, s.account_hint)
-            row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
-                              managed=False)
-            rows[k] = row
+            row = rows.get(k)
+            if row is None:
+                row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
+                                  managed=False)
+                rows[k] = row
             targets = [row]
+        else:
+            # No specific account named: apply to every login on the domain,
+            # or create an unmanaged (domain, None) row if there are none.
+            targets = _domain_rows(domain)
+            if not targets:
+                k = _key(domain, None)
+                row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
+                                  managed=False)
+                rows[k] = row
+                targets = [row]
         for row in targets:
             _bump(row, tier, reason, "inbox")
             if s.reset_url and s.reset_url_trusted and not row.reset_host:
@@ -149,6 +162,15 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
             rows[k] = row
         _bump(row, Tier.CRITICAL,
               "email in a breach that exposed passwords", "breach_email")
+
+    # Order each row's reasons worst-tier-first (stable within a tier), so the
+    # GUI's headline reasons[0] reflects the worst finding regardless of the
+    # loop order in which reasons were accumulated.
+    for row in rows.values():
+        pairs = reason_pairs.get(id(row), [])
+        row.reasons = [
+            text for _t, text in sorted(pairs, key=lambda p: -int(p[0]))
+        ]
 
     # ranking happens at render time; return worst-first for convenience
     return sorted(rows.values(), key=lambda r: (-int(r.tier), r.domain))

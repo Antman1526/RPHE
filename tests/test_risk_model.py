@@ -118,3 +118,37 @@ def test_breach_attaches_to_existing_vault_row():
         [{"email": "me@x.com", "domain": "dropbox.com", "password_exposed": True}])
     assert len(rows) == 1 and rows[0].tier is Tier.CRITICAL
     assert {"vault", "breach_email"} <= rows[0].sources
+
+
+def test_reasons_are_ordered_worst_first():
+    # A weak vault login (MEDIUM) accumulates its reason first, then a CRITICAL
+    # breach-notice inbox signal on the same domain+username. Even though the
+    # MEDIUM reason was added earlier, the CRITICAL reason must lead.
+    rows = build_risk_model(
+        [_sig("Acme", "acme.com", SignalKind.BREACH_NOTICE, Severity.CRITICAL,
+              hint="me@x.com")],
+        [_login("Acme", "me@x.com", "https://acme.com", "f", bits=40.0)],
+        [])
+    assert len(rows) == 1
+    r = rows[0]
+    assert r.tier is Tier.CRITICAL
+    assert "breach notice" in r.reasons[0].lower()
+    weak_idx = next(i for i, x in enumerate(r.reasons) if "weak password" in x)
+    breach_idx = next(i for i, x in enumerate(r.reasons) if "breach notice" in x.lower())
+    assert breach_idx < weak_idx
+
+
+def test_hinted_signal_does_not_inflate_unrelated_login():
+    # A suspicious-login alert hinting alice@x.com must not bump the unrelated
+    # me@x.com login on the same domain; it creates its own unmanaged row.
+    rows = build_risk_model(
+        [_sig("X", "x.com", SignalKind.SUSPICIOUS_LOGIN, Severity.HIGH,
+              hint="alice@x.com")],
+        [_login("X", "me@x.com", "https://x.com", "f")],
+        [])
+    by_user = {r.username: r for r in rows}
+    assert by_user["me@x.com"].tier is Tier.LOW
+    assert "inbox" not in by_user["me@x.com"].sources
+    assert "alice@x.com" in by_user
+    assert by_user["alice@x.com"].tier is Tier.HIGH
+    assert by_user["alice@x.com"].managed is False
