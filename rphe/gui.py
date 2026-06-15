@@ -48,6 +48,7 @@ SEV_COLOR = {"CRITICAL": RED, "HIGH": AMBER, "MEDIUM": ("#ca8a04", "#eab308"),
 
 NAV = [
     ("dashboard", "🏠  Dashboard"),
+    ("risk", "🚨  Risk"),
     ("connect", "🔌  Connect"),
     ("scan", "🛡️  Scan & Fix"),
     ("health", "🔑  Vault Health"),
@@ -163,7 +164,7 @@ class RpheApp(ctk.CTk if ctk else object):
         self.progress.grid(row=0, column=1, padx=14, pady=6)
         self.progress.set(0)
 
-        for key in ("dashboard", "connect", "scan", "health", "settings"):
+        for key in ("dashboard", "risk", "connect", "scan", "health", "settings"):
             page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
             page.grid(row=0, column=0, sticky="nsew", padx=40, pady=(32, 10))
             page.grid_columnconfigure(0, weight=1)
@@ -341,6 +342,69 @@ class RpheApp(ctk.CTk if ctk else object):
                         "missing-cli": ("warn", "Missing")}.get(s, ("todo", "Not connected"))
                 self._set_conn_status("bitwarden", *pill)
         self._async(self.engine.bitwarden_status, done, "")
+
+    # ---- Risk dashboard ----------------------------------------------------
+    def _page_risk(self, page):
+        self._h1(page, "Risk dashboard").grid(row=0, column=0, sticky="w")
+        self._muted(page, "Your accounts, ranked by risk — worst first. Merges inbox "
+                    "alerts, vault hygiene and breach checks.", wrap=720).grid(
+            row=1, column=0, sticky="w", pady=(4, 14))
+        ctk.CTkButton(page, text="🔄  Refresh", width=140,
+                      command=self.on_risk_refresh).grid(row=2, column=0, sticky="w")
+        self.risk_body = ctk.CTkFrame(page, fg_color="transparent")
+        self.risk_body.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        self.risk_body.grid_columnconfigure(0, weight=1)
+        # Render the cached snapshot instantly (no I/O on the worst path; may be None).
+        self._render_risk(self.engine.build_dashboard(refresh=False))
+
+    def on_risk_refresh(self):
+        self._async(lambda: self.engine.build_dashboard(refresh=True), self._render_risk,
+                    "Refreshing risk dashboard…", key="risk_refresh")
+
+    def _render_risk(self, snap):
+        for w in self.risk_body.winfo_children():
+            w.destroy()
+        if snap is None:
+            self._muted(self.risk_body, "No data yet — click Refresh to run your "
+                        "first scan.").grid(row=0, column=0, sticky="w", pady=4)
+            return
+        ctk.CTkLabel(self.risk_body, text=f"as of {snap.generated_at}", text_color=MUTED,
+                     font=ctk.CTkFont(size=11), anchor="w").grid(
+            row=0, column=0, sticky="w", pady=(0, 6))
+        colors = {"CRITICAL": RED, "HIGH": AMBER, "MEDIUM": ACCENT_BG, "LOW": GREEN}
+        r = 1
+        for acc in snap.accounts:
+            if acc.tier.name == "LOW":
+                continue
+            card = self._card(self.risk_body)
+            card.grid(row=r, column=0, sticky="ew", pady=4)
+            card.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(card, text="●", text_color=colors.get(acc.tier.name, GREY),
+                         font=ctk.CTkFont(size=18)).grid(row=0, column=0, padx=(14, 8), pady=12)
+            box = ctk.CTkFrame(card, fg_color="transparent")
+            box.grid(row=0, column=1, sticky="w")
+            who = acc.domain + (f"  ·  {acc.username}" if acc.username else "")
+            ctk.CTkLabel(box, text=who, font=ctk.CTkFont(size=14, weight="bold"),
+                         anchor="w").pack(anchor="w")
+            ctk.CTkLabel(box, text="; ".join(acc.reasons), text_color=MUTED,
+                         font=ctk.CTkFont(size=12), anchor="w", justify="left",
+                         wraplength=460).pack(anchor="w")
+            label = "Rotate" if acc.managed else "Add to vault"
+            ctk.CTkButton(card, text=label, width=120,
+                          command=lambda a=acc: self._rotate_risk_row(a)).grid(
+                row=0, column=2, padx=14)
+            r += 1
+        if r == 1:
+            self._muted(self.risk_body, "✅ Nothing above low risk right now.").grid(
+                row=1, column=0, sticky="w", pady=4)
+
+    def _rotate_risk_row(self, acc):
+        # No reusable "ensure unlocked" gate exists in the GUI — the Scan/rotate
+        # flows call the engine directly and let a VaultError surface via the
+        # _poll_queue error path (which shows a messagebox). Mirror that here.
+        self._async(lambda: self.engine.rotate_from_dashboard(acc),
+                    lambda res: self.on_risk_refresh(),
+                    f"Rotating {acc.domain}…", key=f"rotate_{acc.domain}")
 
     # ---- Connect -----------------------------------------------------------
     def _page_connect(self, page):
