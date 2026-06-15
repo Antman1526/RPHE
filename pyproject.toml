@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rphe"
-version = "0.9.0"
+version = "0.9.1"
 description = "Recovery & Password-Hygiene Engine — scan email for breaches, rotate passwords, sync Bitwarden + NordPass."
 readme = "README.md"
 requires-python = ">=3.11"
