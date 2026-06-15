@@ -56,6 +56,41 @@ def test_reset_link_ignores_lookalike_domain():
     assert sig.reset_url.startswith("https://github.com/password_reset")
 
 
+def test_account_hint_extracted_from_recipient_address():
+    # The alert names the user's own address (different domain from the sender) —
+    # that becomes the account hint so the dashboard can attribute it precisely.
+    sig = classify(
+        message_id="ah1", from_header="Security <noreply@dropbox.com>",
+        subject="Your account was involved in a data breach",
+        body="Hi victim@gmail.com, we detected your data was exposed in a breach.",
+        received_at=_now())
+    assert sig is not None
+    assert sig.account_hint == "victim@gmail.com"
+
+
+def test_account_hint_none_when_no_external_address():
+    # Only a same-domain support address appears — not the user's account, so the
+    # hint stays None and the signal fans out to all logins on the domain.
+    sig = classify(
+        message_id="ah2", from_header="GitHub <noreply@github.com>",
+        subject="Suspicious sign-in attempt blocked",
+        body="We blocked a sign-in. Questions? Contact support@github.com.",
+        received_at=_now())
+    assert sig is not None
+    assert sig.account_hint is None
+
+
+def test_account_hint_none_when_multiple_addresses():
+    # Ambiguous (a forwarded thread with several addresses) -> stay conservative.
+    sig = classify(
+        message_id="ah3", from_header="noreply@dropbox.com",
+        subject="data breach",
+        body="Your data was exposed. cc: a@x.com, b@y.com both affected.",
+        received_at=_now())
+    assert sig is not None
+    assert sig.account_hint is None
+
+
 def test_marketing_email_ignored():
     sig = classify(
         message_id="4", from_header="Deals <news@store.com>",

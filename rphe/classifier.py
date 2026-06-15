@@ -48,6 +48,9 @@ _RESET_PATH_HINT = re.compile(
 # (these are the password managers / the tool itself).
 _SELF_DOMAINS = {"bitwarden.com", "nordpass.com", "nordsecurity.com"}
 
+# A plain email address, used to spot the account an alert is addressed to.
+_EMAIL = re.compile(r"\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b")
+
 
 def _sender_domain(from_header: str) -> str:
     m = re.search(r"@([A-Za-z0-9.\-]+)", from_header or "")
@@ -92,6 +95,29 @@ def _extract_reset_url(body: str, sender_domain: str) -> Optional[str]:
     resetish = [u for u in (same_domain or candidates) if _RESET_PATH_HINT.search(u)]
     chosen = (resetish or same_domain or candidates)
     return chosen[0] if chosen else None
+
+
+def _extract_account_hint(body: str, subject: str, sender_domain: str) -> Optional[str]:
+    """The specific account an alert is about, when it clearly names one.
+
+    Conservative on purpose: returns the email address mentioned in the body /
+    subject whose registrable domain differs from the sender's — i.e. the
+    recipient's own address in a "Hi you@example.com" greeting — and ONLY when
+    exactly one such address is named. A same-domain address (support@sender,
+    no-reply@sender) is ignored. Returns None otherwise, so the dashboard falls
+    back to attaching the signal to every login on the domain rather than
+    misattributing it to one guessed account.
+    """
+    from .linksafety import registrable_domain
+    sender_rd = registrable_domain(sender_domain or "")
+    seen: list[str] = []
+    for m in _EMAIL.finditer(f"{subject}\n{body}"):
+        addr = m.group(1).lower()
+        if sender_rd and registrable_domain(addr.split("@")[-1]) == sender_rd:
+            continue  # support@sender / no-reply@sender — not the user's account
+        if addr not in seen:
+            seen.append(addr)
+    return seen[0] if len(seen) == 1 else None
 
 
 def classify(
@@ -158,7 +184,7 @@ def classify(
         kind=kind,
         severity=severity,
         reset_url=reset_url,
-        account_hint=None,
+        account_hint=_extract_account_hint(body, subject, domain),
         rationale="; ".join(rationale_bits),
         raw_snippet=snippet,
         reset_url_trusted=link.trusted,
