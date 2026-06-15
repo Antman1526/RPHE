@@ -33,6 +33,23 @@ def test_clean_login_is_low_and_managed():
     assert "vault" in r.sources
 
 
+def test_managed_row_preserves_vault_item_name_as_service_name():
+    # The vault item's friendly name (e.g. "GitHub") must be preserved so a
+    # later rotation matches the existing item by identity_key (name|user|host)
+    # instead of creating a duplicate keyed on the bare domain.
+    rows = build_risk_model([], [_login("GitHub", "me@x.com", "https://github.com", "f")], [])
+    assert rows[0].domain == "github.com"
+    assert rows[0].service_name == "GitHub"
+
+
+def test_unmanaged_inbox_only_row_has_no_service_name():
+    rows = build_risk_model(
+        [_sig("LinkedIn", "linkedin.com", SignalKind.BREACH_NOTICE, Severity.CRITICAL)],
+        [], [])
+    assert rows[0].managed is False
+    assert rows[0].service_name is None
+
+
 def test_pwned_password_is_critical():
     rows = build_risk_model([], [_login("Dropbox", "me@x.com", "https://dropbox.com", "bbbb", pwned=3)], [])
     assert rows[0].tier is Tier.CRITICAL

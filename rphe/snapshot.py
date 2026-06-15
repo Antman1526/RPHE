@@ -1,7 +1,8 @@
 """Persist the dashboard risk model as a redacted, 0600 JSON snapshot.
 
 Stored: derived risk metadata only (domain, username, tier, reasons, sources,
-vault_item_id, 8-char password_fingerprint, managed, reset_host). NEVER stored:
+vault_item_id, service_name, 8-char password_fingerprint, managed, reset_host).
+The service_name is the vault item's display name, not a secret. NEVER stored:
 plaintext passwords or tokened reset URLs. A final audit._redact pass scrubs the
 free-text reason strings.
 """
@@ -34,6 +35,7 @@ def _row_to_dict(r: AccountRisk) -> dict:
         "reasons": [_redact(x) for x in r.reasons],
         "sources": sorted(r.sources),
         "vault_item_id": r.vault_item_id,
+        "service_name": r.service_name,
         "password_fingerprint": r.password_fingerprint,
         "managed": r.managed,
         "reset_url_trusted": r.reset_url_trusted,
@@ -47,6 +49,7 @@ def _row_from_dict(d: dict) -> AccountRisk:
         tier=Tier[d["tier"]], reasons=list(d.get("reasons") or []),
         sources=set(d.get("sources") or []),
         vault_item_id=d.get("vault_item_id"),
+        service_name=d.get("service_name"),
         password_fingerprint=d.get("password_fingerprint"),
         managed=bool(d.get("managed")),
         reset_url_trusted=bool(d.get("reset_url_trusted")),

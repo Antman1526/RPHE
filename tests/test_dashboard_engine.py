@@ -91,11 +91,31 @@ def test_rotate_from_dashboard_delegates(monkeypatch, tmp_path):
         return "ROT"
     monkeypatch.setattr(eng, "rotate", _fake_rotate)
     monkeypatch.setattr(eng, "password_candidates", lambda n=1: ["Generated-PW-123"])
+    # A managed row carries the vault item's friendly name; rotation MUST use it
+    # (not the domain) so _find_existing matches the existing item by identity_key
+    # instead of creating a duplicate.
     row = AccountRisk(domain="github.com", username="me@x.com", tier=Tier.HIGH,
-                      vault_item_id="id1", managed=True)
+                      vault_item_id="id1", service_name="GitHub", managed=True)
     out = eng.rotate_from_dashboard(row)
     assert out == "ROT"
-    assert captured["service_name"] == "github.com"
+    assert captured["service_name"] == "GitHub"        # friendly name, NOT "github.com"
     assert captured["username"] == "me@x.com"
-    assert captured["url"] == "https://github.com"
+    assert captured["url"] == "https://github.com"     # url still keyed on the domain
     assert captured["kind"] == "dashboard"
+
+
+def test_rotate_from_dashboard_falls_back_to_domain_when_unnamed(monkeypatch, tmp_path):
+    # Unmanaged rows (breach-only / inbox-only) have no service_name; rotation
+    # falls back to the registrable domain.
+    eng = _engine_with([], monkeypatch, tmp_path)
+    captured = {}
+    def _fake_rotate(*, service_name, username, password, url=None, kind="manual"):
+        captured.update(service_name=service_name, url=url)
+        return "ROT"
+    monkeypatch.setattr(eng, "rotate", _fake_rotate)
+    monkeypatch.setattr(eng, "password_candidates", lambda n=1: ["Generated-PW-123"])
+    row = AccountRisk(domain="dropbox.com", username="me@x.com", tier=Tier.CRITICAL,
+                      managed=False)
+    eng.rotate_from_dashboard(row)
+    assert captured["service_name"] == "dropbox.com"
+    assert captured["url"] == "https://dropbox.com"

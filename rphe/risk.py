@@ -41,6 +41,7 @@ class AccountRisk:
     reasons: list[str] = field(default_factory=list)
     sources: set[str] = field(default_factory=set)
     vault_item_id: Optional[str] = None
+    service_name: Optional[str] = None  # vault item's display name (managed rows)
     password_fingerprint: Optional[str] = None
     managed: bool = False
     reset_url_trusted: bool = False
@@ -86,6 +87,7 @@ def build_risk_model(scan_signals, vault_logins, breach_hits,
         if row is None:
             row = AccountRisk(domain=domain, username=k[1], tier=Tier.LOW,
                               vault_item_id=login.get("item_id"),
+                              service_name=login.get("name"),
                               password_fingerprint=login.get("fingerprint"),
                               managed=True)
             rows[k] = row

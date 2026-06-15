@@ -266,7 +266,12 @@ class Engine:
         if password is None:
             password = self.password_candidates(n=1)[0]
         url = f"https://{row.domain}" if row.domain else None
-        return self.rotate(service_name=row.domain, username=row.username or "",
+        # Managed rows carry the vault item's display name; rotate by it so
+        # _find_existing matches the existing item (identity_key = name|user|host)
+        # rather than creating a duplicate keyed on the bare domain. Unmanaged
+        # rows have no name, so fall back to the domain.
+        service_name = row.service_name or row.domain
+        return self.rotate(service_name=service_name, username=row.username or "",
                            password=password, url=url, kind="dashboard")
 
     # --- vault-wide audit (weak / reused / breached) -----------------------
