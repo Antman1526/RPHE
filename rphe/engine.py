@@ -259,6 +259,16 @@ class Engine:
                          sources={k: v.get("ok") for k, v in sources.items()})
         return snap
 
+    def rotate_from_dashboard(self, row, password: Optional[str] = None):
+        """Rotate the account behind an AccountRisk row via the existing
+        lockout-safe flow. Generates a vetted password if none supplied, then
+        delegates to rotate() (PENDING + old password preserved)."""
+        if password is None:
+            password = self.password_candidates(n=1)[0]
+        url = f"https://{row.domain}" if row.domain else None
+        return self.rotate(service_name=row.domain, username=row.username or "",
+                           password=password, url=url, kind="dashboard")
+
     # --- vault-wide audit (weak / reused / breached) -----------------------
     def audit_vault(self, check_pwned: bool = True, weak_below_bits: int = 60) -> dict:
         """Audit EVERY Bitwarden login for breached, reused and weak passwords.

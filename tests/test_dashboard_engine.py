@@ -78,3 +78,24 @@ def test_build_dashboard_vault_locked_is_partial(monkeypatch, tmp_path):
 def test_build_dashboard_no_refresh_returns_cached(monkeypatch, tmp_path):
     eng = _engine_with([], monkeypatch, tmp_path)
     assert eng.build_dashboard(refresh=False) is None        # never run yet
+
+
+from rphe.risk import AccountRisk, Tier
+
+
+def test_rotate_from_dashboard_delegates(monkeypatch, tmp_path):
+    eng = _engine_with([], monkeypatch, tmp_path)
+    captured = {}
+    def _fake_rotate(*, service_name, username, password, url=None, kind="manual"):
+        captured.update(service_name=service_name, username=username, url=url, kind=kind)
+        return "ROT"
+    monkeypatch.setattr(eng, "rotate", _fake_rotate)
+    monkeypatch.setattr(eng, "password_candidates", lambda n=1: ["Generated-PW-123"])
+    row = AccountRisk(domain="github.com", username="me@x.com", tier=Tier.HIGH,
+                      vault_item_id="id1", managed=True)
+    out = eng.rotate_from_dashboard(row)
+    assert out == "ROT"
+    assert captured["service_name"] == "github.com"
+    assert captured["username"] == "me@x.com"
+    assert captured["url"] == "https://github.com"
+    assert captured["kind"] == "dashboard"
