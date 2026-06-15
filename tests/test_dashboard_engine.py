@@ -119,3 +119,23 @@ def test_rotate_from_dashboard_falls_back_to_domain_when_unnamed(monkeypatch, tm
     eng.rotate_from_dashboard(row)
     assert captured["service_name"] == "dropbox.com"
     assert captured["url"] == "https://dropbox.com"
+
+
+import json as _json
+from typer.testing import CliRunner
+from rphe import cli as cli_mod
+from rphe.snapshot import RiskSnapshot, save_snapshot
+
+
+def test_cli_dashboard_json(monkeypatch, tmp_path):
+    row = AccountRisk(domain="github.com", username="me@x.com", tier=Tier.HIGH,
+                      reasons=["reused on 3 sites"], sources={"vault"}, managed=True)
+    save_snapshot(tmp_path, RiskSnapshot(generated_at="2026-06-14T20:00:00Z",
+                                         sources={}, accounts=[row]))
+    from rphe.config import Config
+    monkeypatch.setattr(cli_mod, "_engine",
+                        lambda: Engine(cfg=Config(data_dir=str(tmp_path))))
+    res = CliRunner().invoke(cli_mod.app, ["dashboard", "--json"])
+    assert res.exit_code == 0
+    data = _json.loads(res.stdout)
+    assert data["accounts"][0]["domain"] == "github.com"

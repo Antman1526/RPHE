@@ -28,6 +28,7 @@ Rich is used for nice tables; Typer for arg parsing. Both are cross-platform.
 from __future__ import annotations
 
 import getpass
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,6 +71,17 @@ def _ctx() -> tuple[Config, SecretStore, AuditLog]:
     store = SecretStore()
     audit = AuditLog(cfg.resolved_data_dir)
     return cfg, store, audit
+
+
+def _engine():
+    """Build an Engine for read-style commands (no forced vault unlock).
+
+    The dashboard degrades gracefully if the vault is locked, so unlike
+    `_engine_unlocked()` this does not prompt for the master password.
+    """
+    from .engine import Engine
+    cfg, store, audit = _ctx()
+    return Engine(cfg, store, audit)
 
 
 # --------------------------------------------------------------------------- #
@@ -680,6 +692,45 @@ def breach(
         table.add_row(r.name, "[red]YES[/]" if r.breached else "[green]no[/]",
                       ", ".join(r.breach_titles[:6]))
     console.print(table)
+
+
+# --------------------------------------------------------------------------- #
+# Risk dashboard
+# --------------------------------------------------------------------------- #
+@app.command()
+def dashboard(
+    refresh: bool = typer.Option(False, "--refresh", help="Recompute before showing."),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    show_all: bool = typer.Option(False, "--all", help="Include low-risk rows."),
+    tier: str = typer.Option("", "--tier", help="Filter: critical|high|medium|low."),
+):
+    """Show the prioritized account-risk dashboard."""
+    from .snapshot import snapshot_to_dict
+    eng = _engine()
+    snap = eng.build_dashboard(refresh=refresh)
+    if snap is None:
+        typer.echo("No dashboard yet — run your first scan: rphe dashboard --refresh")
+        raise typer.Exit(code=0)
+    if as_json:
+        typer.echo(json.dumps(snapshot_to_dict(snap), indent=2))
+        raise typer.Exit(code=0)
+
+    rows = snap.accounts
+    if not show_all:
+        rows = [r for r in rows if r.tier.name != "LOW"]
+    if tier:
+        rows = [r for r in rows if r.tier.name == tier.upper()]
+    table = Table(title=f"Risk dashboard — as of {snap.generated_at}")
+    table.add_column("Tier"); table.add_column("Account"); table.add_column("Why", overflow="fold")
+    colors = {"CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "cyan", "LOW": "green"}
+    for r in rows:
+        who = r.domain + (f" · {r.username}" if r.username else "")
+        table.add_row(f"[{colors.get(r.tier.name, 'white')}]{r.tier.name}[/]",
+                      who, "; ".join(r.reasons))
+    console.print(table)
+    bad = [k for k, v in snap.sources.items() if not v.get("ok", True)]
+    if bad:
+        typer.echo(f"(partial — couldn't fully check: {', '.join(bad)})")
 
 
 # --------------------------------------------------------------------------- #
